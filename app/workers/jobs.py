@@ -20,6 +20,7 @@ from app.config import get_settings
 from app.database import async_sessionmaker
 from app.services.backtester import BacktestRunner
 from app.services.candle_ingestor import CandleIngestor
+from app.services.binance_executor import BinanceExecutor
 from app.services.crypto_candle_ingestor import CryptoCandleIngestor
 from app.services.crypto_fee_model import CryptoFeeModel
 from app.services.crypto_outcome_detector import CryptoOutcomeDetector
@@ -44,6 +45,7 @@ _signal_pipeline: SignalPipeline | None = None
 _outcome_detector: OutcomeDetector | None = None
 _crypto_candle_ingestor: CryptoCandleIngestor | None = None
 _crypto_outcome_detector: CryptoOutcomeDetector | None = None
+_binance_executor: BinanceExecutor | None = None
 _backtest_runner: BacktestRunner | None = None
 _param_optimizer: ParamOptimizer | None = None
 _performance_tracker: PerformanceTracker | None = None
@@ -116,6 +118,13 @@ def _get_data_retention() -> DataRetentionService:
     if _data_retention is None:
         _data_retention = DataRetentionService()
     return _data_retention
+
+
+def _get_binance_executor() -> BinanceExecutor:
+    global _binance_executor
+    if _binance_executor is None:
+        _binance_executor = BinanceExecutor()
+    return _binance_executor
 
 
 def _get_crypto_candle_ingestor() -> CryptoCandleIngestor:
@@ -412,7 +421,11 @@ async def job_fetch_crypto_candles() -> None:
 
 
 async def job_generate_crypto_signals() -> None:
-    """Run the signal pipeline for all configured crypto symbols."""
+    """Run the signal pipeline for all configured crypto symbols.
+
+    After generating signals, automatically executes orders on Binance
+    Futures (testnet or mainnet) if API keys are configured.
+    """
     settings = get_settings()
     if not settings.crypto_enabled:
         return
@@ -426,12 +439,45 @@ async def job_generate_crypto_signals() -> None:
             try:
                 signals = await pipeline.run(session, symbol=symbol)
                 logger.info("[Job] generate_crypto_signals: {} signal(s) for {}", len(signals), symbol)
+
+                # Auto-execute orders if API keys are configured
+                if signals and settings.binance_order_execution_enabled:
+                    executor = _get_binance_executor()
+                    env = "TESTNET" if settings.binance_testnet else "MAINNET"
+                    for signal in signals:
+                        try:
+                            result = await executor.execute_signal(session, signal)
+                            if result.success:
+                                logger.info(
+                                    "[Job] Order executed on {} — signal {} {} {}",
+                                    env, signal.id, signal.direction, signal.symbol,
+                                )
+                            else:
+                                logger.warning(
+                                    "[Job] Order execution failed — signal {}: {}",
+                                    signal.id, result.error_message,
+                                )
+                        except Exception:
+                            logger.opt(exception=True).error(
+                                "[Job] Order execution error for signal {}", signal.id
+                            )
+                elif signals and not settings.binance_order_execution_enabled:
+                    logger.info(
+                        "[Job] {} signal(s) generated but no Binance API keys configured "
+                        "— manual trading mode (check dashboard/Telegram for alerts)",
+                        len(signals),
+                    )
+
             except Exception:
                 logger.opt(exception=True).error("[Job] generate_crypto_signals failed for {}", symbol)
 
 
 async def job_detect_crypto_outcomes() -> None:
-    """Check active crypto signals against Binance mark price and record outcomes."""
+    """Check active crypto signals against Binance mark price and record outcomes.
+
+    When an outcome is detected and API keys are configured, cancels any
+    remaining open SL/TP orders on Binance to avoid accidental re-fills.
+    """
     settings = get_settings()
     if not settings.crypto_enabled:
         return
@@ -445,6 +491,31 @@ async def job_detect_crypto_outcomes() -> None:
             outcomes = await detector.check_active_signals(session, crypto_symbols=symbols)
             if outcomes:
                 logger.info("[Job] detect_crypto_outcomes: {} outcome(s) recorded", len(outcomes))
+
+                # Cancel any dangling SL/TP orders for closed signals
+                if settings.binance_order_execution_enabled:
+                    executor = _get_binance_executor()
+                    from app.models.signal import Signal
+                    from sqlalchemy import select
+                    for outcome in outcomes:
+                        try:
+                            signal_result = await session.execute(
+                                select(Signal).where(Signal.id == outcome.signal_id)
+                            )
+                            signal = signal_result.scalar_one_or_none()
+                            if signal:
+                                cancelled = await executor.cancel_signal_orders(
+                                    session, signal.id, signal.symbol
+                                )
+                                if cancelled:
+                                    logger.info(
+                                        "[Job] Cancelled {} dangling order(s) for signal {}",
+                                        cancelled, signal.id,
+                                    )
+                        except Exception:
+                            logger.opt(exception=True).warning(
+                                "[Job] Failed to cancel orders for outcome {}", outcome.id
+                            )
         except Exception:
             logger.opt(exception=True).error("[Job] detect_crypto_outcomes failed")
 

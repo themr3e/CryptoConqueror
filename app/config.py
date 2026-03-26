@@ -40,9 +40,16 @@ class Settings(BaseSettings):
 
     # ── Crypto Futures (Binance) ─────────────────────────────────────────────
     # Public market data endpoints require no API key.
-    # Keys are only needed for order execution (future feature).
+    # Keys are only needed for order execution.
     binance_futures_api_key: str = ""
     binance_futures_api_secret: str = ""
+
+    # Use Binance Futures TESTNET (fake money — safe for testing).
+    # Set to false only when you are ready for real trading.
+    binance_testnet: bool = True
+
+    # Leverage applied to every futures position (default 5x — conservative).
+    binance_leverage: int = 5
 
     # Comma-separated list of crypto futures symbols to track
     crypto_symbols: str = "BTCUSDT,ETHUSDT"
@@ -50,6 +57,18 @@ class Settings(BaseSettings):
     # Master switch — set CRYPTO_ENABLED=true to activate the crypto pipeline.
     # Defaults to False so existing XAUUSD behaviour is unaffected on deploy.
     crypto_enabled: bool = False
+
+    @property
+    def binance_base_url(self) -> str:
+        """Binance Futures REST base URL — testnet or mainnet."""
+        if self.binance_testnet:
+            return "https://testnet.binancefuture.com"
+        return "https://fapi.binance.com"
+
+    @property
+    def binance_order_execution_enabled(self) -> bool:
+        """True when both API key and secret are configured."""
+        return bool(self.binance_futures_api_key.strip() and self.binance_futures_api_secret.strip())
 
     @property
     def xauusd_enabled(self) -> bool:

@@ -1,0 +1,504 @@
+"""Binance Futures order executor.
+
+Handles HMAC-signed order placement on Binance Futures (testnet or mainnet).
+
+For every signal it places three orders:
+  1. MARKET entry order
+  2. STOP_MARKET stop-loss (reduceOnly)
+  3. TAKE_PROFIT_MARKET take-profit (reduceOnly)
+
+Uses the Binance Futures TESTNET by default — safe to run with fake money.
+Switch to mainnet by setting BINANCE_TESTNET=false in your .env.
+
+Testnet sign-up: https://testnet.binancefuture.com (login with GitHub)
+"""
+
+from __future__ import annotations
+
+import hashlib
+import hmac
+import json
+import time
+from dataclasses import dataclass
+from decimal import Decimal, ROUND_DOWN
+from typing import Any
+
+import httpx
+from loguru import logger
+from sqlalchemy.ext.asyncio import AsyncSession
+
+from app.config import get_settings
+from app.models.signal import Signal
+from app.models.trade_order import TradeOrder
+
+
+@dataclass
+class OrderResult:
+    """Result of a single order placement attempt."""
+    success: bool
+    order_role: str          # "entry" | "stop_loss" | "take_profit_1"
+    broker_order_id: str | None
+    status: str              # "NEW" | "FILLED" | "REJECTED" | "ERROR"
+    raw_response: dict | None
+    error_message: str | None = None
+
+
+@dataclass
+class ExecutionResult:
+    """Full result of executing one signal (entry + SL + TP)."""
+    signal_id: int
+    symbol: str
+    success: bool
+    orders: list[OrderResult]
+    error_message: str | None = None
+
+
+# ---------------------------------------------------------------------------
+# Lot size / tick size precision helpers
+# ---------------------------------------------------------------------------
+
+# Binance Futures minimum quantity steps (approximate — fetched properly via exchangeInfo)
+_LOT_SIZE_DEFAULTS: dict[str, Decimal] = {
+    "BTCUSDT":  Decimal("0.001"),
+    "ETHUSDT":  Decimal("0.001"),
+    "BNBUSDT":  Decimal("0.01"),
+    "SOLUSDT":  Decimal("0.1"),
+}
+
+_TICK_SIZE_DEFAULTS: dict[str, Decimal] = {
+    "BTCUSDT":  Decimal("0.10"),
+    "ETHUSDT":  Decimal("0.01"),
+    "BNBUSDT":  Decimal("0.01"),
+    "SOLUSDT":  Decimal("0.001"),
+}
+
+
+def _round_quantity(qty: Decimal, symbol: str) -> Decimal:
+    """Round quantity down to the symbol's lot size step."""
+    step = _LOT_SIZE_DEFAULTS.get(symbol, Decimal("0.001"))
+    return (qty / step).to_integral_value(rounding=ROUND_DOWN) * step
+
+
+def _round_price(price: Decimal, symbol: str) -> Decimal:
+    """Round price to the symbol's tick size."""
+    tick = _TICK_SIZE_DEFAULTS.get(symbol, Decimal("0.01"))
+    return (price / tick).to_integral_value(rounding=ROUND_DOWN) * tick
+
+
+class BinanceExecutor:
+    """Places and tracks Binance Futures orders for generated signals."""
+
+    def __init__(self) -> None:
+        settings = get_settings()
+        self._api_key = settings.binance_futures_api_key
+        self._api_secret = settings.binance_futures_api_secret
+        self._base_url = settings.binance_base_url
+        self._leverage = settings.binance_leverage
+        self._testnet = settings.binance_testnet
+        self._environment = "testnet" if self._testnet else "mainnet"
+        self._timeout = 15.0
+
+    # ------------------------------------------------------------------
+    # Public interface
+    # ------------------------------------------------------------------
+
+    async def execute_signal(
+        self,
+        session: AsyncSession,
+        signal: Signal,
+    ) -> ExecutionResult:
+        """Execute a signal: set leverage, place entry + SL + TP orders.
+
+        Args:
+            session: Async DB session (for persisting TradeOrder records).
+            signal:  Persisted Signal ORM object.
+
+        Returns:
+            ExecutionResult with details of all placed orders.
+        """
+        if not self._api_key or not self._api_secret:
+            return ExecutionResult(
+                signal_id=signal.id,
+                symbol=signal.symbol,
+                success=False,
+                orders=[],
+                error_message="Binance API key/secret not configured",
+            )
+
+        logger.info(
+            "BinanceExecutor: executing signal {} — {} {} ({})",
+            signal.id, signal.direction, signal.symbol, self._environment,
+        )
+
+        # 1. Set leverage for this symbol
+        await self._set_leverage(signal.symbol)
+
+        # 2. Calculate position quantity
+        quantity = self._calculate_quantity(signal)
+        if quantity <= 0:
+            return ExecutionResult(
+                signal_id=signal.id,
+                symbol=signal.symbol,
+                success=False,
+                orders=[],
+                error_message=f"Calculated quantity {quantity} is zero or negative",
+            )
+
+        orders: list[OrderResult] = []
+
+        # 3. Place entry MARKET order
+        entry_result = await self._place_entry(session, signal, quantity)
+        orders.append(entry_result)
+
+        if not entry_result.success:
+            return ExecutionResult(
+                signal_id=signal.id,
+                symbol=signal.symbol,
+                success=False,
+                orders=orders,
+                error_message=f"Entry order failed: {entry_result.error_message}",
+            )
+
+        # 4. Place STOP_MARKET stop-loss (opposite side, reduceOnly)
+        sl_result = await self._place_stop_loss(session, signal, quantity)
+        orders.append(sl_result)
+
+        # 5. Place TAKE_PROFIT_MARKET take-profit (opposite side, reduceOnly)
+        tp_result = await self._place_take_profit(session, signal, quantity)
+        orders.append(tp_result)
+
+        all_ok = entry_result.success  # SL/TP failures are logged but don't void the trade
+        if not sl_result.success:
+            logger.warning("BinanceExecutor: SL order failed for signal {} — {}", signal.id, sl_result.error_message)
+        if not tp_result.success:
+            logger.warning("BinanceExecutor: TP order failed for signal {} — {}", signal.id, tp_result.error_message)
+
+        logger.info(
+            "BinanceExecutor: signal {} executed on {} — entry={}, sl={}, tp={}",
+            signal.id, self._environment,
+            entry_result.status, sl_result.status, tp_result.status,
+        )
+
+        return ExecutionResult(
+            signal_id=signal.id,
+            symbol=signal.symbol,
+            success=all_ok,
+            orders=orders,
+        )
+
+    async def cancel_signal_orders(
+        self,
+        session: AsyncSession,
+        signal_id: int,
+        symbol: str,
+    ) -> int:
+        """Cancel all open orders linked to a signal.
+
+        Args:
+            session:   Async DB session.
+            signal_id: Signal ID to cancel orders for.
+            symbol:    Binance symbol (needed for cancel endpoint).
+
+        Returns:
+            Number of orders successfully cancelled.
+        """
+        from sqlalchemy import select, and_
+
+        stmt = select(TradeOrder).where(
+            and_(
+                TradeOrder.signal_id == signal_id,
+                TradeOrder.status == "NEW",
+                TradeOrder.broker_order_id.isnot(None),
+            )
+        )
+        result = await session.execute(stmt)
+        orders = result.scalars().all()
+
+        cancelled = 0
+        for order in orders:
+            ok = await self._cancel_order(symbol, order.broker_order_id)
+            if ok:
+                order.status = "CANCELED"
+                cancelled += 1
+
+        if cancelled:
+            await session.commit()
+
+        return cancelled
+
+    async def get_account_balance(self) -> Decimal | None:
+        """Fetch available USDT balance from Binance Futures account.
+
+        Returns:
+            Available balance in USDT, or None on failure.
+        """
+        try:
+            data = await self._signed_get("/fapi/v2/account", {})
+            assets = data.get("assets", [])
+            for asset in assets:
+                if asset.get("asset") == "USDT":
+                    return Decimal(str(asset.get("availableBalance", "0")))
+        except Exception:
+            logger.opt(exception=True).warning("BinanceExecutor: failed to fetch account balance")
+        return None
+
+    # ------------------------------------------------------------------
+    # Private order placement helpers
+    # ------------------------------------------------------------------
+
+    async def _place_entry(
+        self,
+        session: AsyncSession,
+        signal: Signal,
+        quantity: Decimal,
+    ) -> OrderResult:
+        """Place the entry MARKET order."""
+        side = signal.direction  # "BUY" or "SELL"
+        params = {
+            "symbol":   signal.symbol,
+            "side":     side,
+            "type":     "MARKET",
+            "quantity": str(_round_quantity(quantity, signal.symbol)),
+        }
+
+        return await self._place_and_record(
+            session, signal, params, order_role="entry"
+        )
+
+    async def _place_stop_loss(
+        self,
+        session: AsyncSession,
+        signal: Signal,
+        quantity: Decimal,
+    ) -> OrderResult:
+        """Place the STOP_MARKET stop-loss order (reduceOnly)."""
+        # Opposite side closes the position
+        side = "SELL" if signal.direction == "BUY" else "BUY"
+        stop_price = _round_price(signal.stop_loss, signal.symbol)
+
+        params = {
+            "symbol":      signal.symbol,
+            "side":        side,
+            "type":        "STOP_MARKET",
+            "quantity":    str(_round_quantity(quantity, signal.symbol)),
+            "stopPrice":   str(stop_price),
+            "reduceOnly":  "true",
+        }
+
+        return await self._place_and_record(
+            session, signal, params, order_role="stop_loss"
+        )
+
+    async def _place_take_profit(
+        self,
+        session: AsyncSession,
+        signal: Signal,
+        quantity: Decimal,
+    ) -> OrderResult:
+        """Place the TAKE_PROFIT_MARKET take-profit-1 order (reduceOnly)."""
+        side = "SELL" if signal.direction == "BUY" else "BUY"
+        tp_price = _round_price(signal.take_profit_1, signal.symbol)
+
+        params = {
+            "symbol":      signal.symbol,
+            "side":        side,
+            "type":        "TAKE_PROFIT_MARKET",
+            "quantity":    str(_round_quantity(quantity, signal.symbol)),
+            "stopPrice":   str(tp_price),
+            "reduceOnly":  "true",
+        }
+
+        return await self._place_and_record(
+            session, signal, params, order_role="take_profit_1"
+        )
+
+    async def _place_and_record(
+        self,
+        session: AsyncSession,
+        signal: Signal,
+        params: dict[str, Any],
+        order_role: str,
+    ) -> OrderResult:
+        """Place an order and persist a TradeOrder record regardless of outcome."""
+        raw: dict | None = None
+        error_msg: str | None = None
+        broker_order_id: str | None = None
+        status = "ERROR"
+
+        try:
+            raw = await self._signed_post("/fapi/v1/order", params)
+            broker_order_id = str(raw.get("orderId", ""))
+            status = raw.get("status", "NEW")
+            success = True
+            logger.info(
+                "BinanceExecutor: {} order placed — orderId={} status={}",
+                order_role, broker_order_id, status,
+            )
+        except BinanceAPIError as exc:
+            error_msg = str(exc)
+            success = False
+            logger.error("BinanceExecutor: {} order failed — {}", order_role, error_msg)
+        except Exception as exc:
+            error_msg = str(exc)
+            success = False
+            logger.opt(exception=True).error("BinanceExecutor: {} order error", order_role)
+
+        # Always persist a record for auditing
+        trade_order = TradeOrder(
+            signal_id=signal.id,
+            broker_order_id=broker_order_id,
+            order_role=order_role,
+            symbol=params["symbol"],
+            side=params["side"],
+            order_type=params["type"],
+            quantity=Decimal(str(params.get("quantity", "0"))),
+            stop_price=Decimal(str(params["stopPrice"])) if "stopPrice" in params else None,
+            status=status if success else "ERROR",
+            raw_response=json.dumps(raw) if raw else json.dumps({"error": error_msg}),
+            environment=self._environment,
+        )
+        session.add(trade_order)
+        await session.commit()
+
+        return OrderResult(
+            success=success,
+            order_role=order_role,
+            broker_order_id=broker_order_id,
+            status=status if success else "ERROR",
+            raw_response=raw,
+            error_message=error_msg,
+        )
+
+    # ------------------------------------------------------------------
+    # Leverage + account helpers
+    # ------------------------------------------------------------------
+
+    async def _set_leverage(self, symbol: str) -> None:
+        """Set leverage for the given symbol."""
+        try:
+            await self._signed_post("/fapi/v1/leverage", {
+                "symbol":   symbol,
+                "leverage": self._leverage,
+            })
+            logger.debug("BinanceExecutor: leverage set to {}x for {}", self._leverage, symbol)
+        except Exception:
+            logger.opt(exception=True).warning(
+                "BinanceExecutor: failed to set leverage for {}", symbol
+            )
+
+    async def _cancel_order(self, symbol: str, order_id: str) -> bool:
+        """Cancel a single order by ID."""
+        try:
+            await self._signed_delete("/fapi/v1/order", {
+                "symbol":  symbol,
+                "orderId": order_id,
+            })
+            return True
+        except Exception:
+            logger.opt(exception=True).warning(
+                "BinanceExecutor: failed to cancel order {}", order_id
+            )
+            return False
+
+    def _calculate_quantity(self, signal: Signal) -> Decimal:
+        """Calculate position size in base currency.
+
+        Uses account_balance * 1% risk / (entry - SL) * leverage.
+        """
+        settings = get_settings()
+        account_balance = Decimal(str(settings.account_balance))
+        risk_pct = Decimal("0.01")  # 1% risk per trade
+
+        entry = signal.entry_price
+        sl = signal.stop_loss
+        price_risk = abs(entry - sl)
+
+        if price_risk == 0:
+            return Decimal("0")
+
+        # Without leverage: risk_amount / price_risk
+        # With leverage: position = (risk_amount / price_risk) * leverage
+        risk_amount = account_balance * risk_pct
+        quantity = (risk_amount / price_risk) * self._leverage
+
+        return _round_quantity(quantity, signal.symbol)
+
+    # ------------------------------------------------------------------
+    # Signed HTTP helpers
+    # ------------------------------------------------------------------
+
+    def _sign(self, params: dict[str, Any]) -> dict[str, Any]:
+        """Add timestamp and HMAC-SHA256 signature to params."""
+        params["timestamp"] = int(time.time() * 1000)
+        query_string = "&".join(f"{k}={v}" for k, v in params.items())
+        signature = hmac.new(
+            self._api_secret.encode("utf-8"),
+            query_string.encode("utf-8"),
+            hashlib.sha256,
+        ).hexdigest()
+        params["signature"] = signature
+        return params
+
+    def _headers(self) -> dict[str, str]:
+        return {"X-MBX-APIKEY": self._api_key}
+
+    async def _signed_post(
+        self,
+        path: str,
+        params: dict[str, Any],
+    ) -> dict[str, Any]:
+        signed = self._sign(dict(params))
+        async with httpx.AsyncClient(timeout=self._timeout) as client:
+            resp = await client.post(
+                f"{self._base_url}{path}",
+                data=signed,
+                headers=self._headers(),
+            )
+            data = resp.json()
+            if resp.status_code != 200:
+                raise BinanceAPIError(
+                    f"HTTP {resp.status_code} — code={data.get('code')} msg={data.get('msg')}"
+                )
+            return data
+
+    async def _signed_get(
+        self,
+        path: str,
+        params: dict[str, Any],
+    ) -> dict[str, Any]:
+        signed = self._sign(dict(params))
+        async with httpx.AsyncClient(timeout=self._timeout) as client:
+            resp = await client.get(
+                f"{self._base_url}{path}",
+                params=signed,
+                headers=self._headers(),
+            )
+            data = resp.json()
+            if resp.status_code != 200:
+                raise BinanceAPIError(
+                    f"HTTP {resp.status_code} — code={data.get('code')} msg={data.get('msg')}"
+                )
+            return data
+
+    async def _signed_delete(
+        self,
+        path: str,
+        params: dict[str, Any],
+    ) -> dict[str, Any]:
+        signed = self._sign(dict(params))
+        async with httpx.AsyncClient(timeout=self._timeout) as client:
+            resp = await client.delete(
+                f"{self._base_url}{path}",
+                params=signed,
+                headers=self._headers(),
+            )
+            data = resp.json()
+            if resp.status_code != 200:
+                raise BinanceAPIError(
+                    f"HTTP {resp.status_code} — code={data.get('code')} msg={data.get('msg')}"
+                )
+            return data
+
+
+class BinanceAPIError(Exception):
+    """Raised when Binance returns a non-200 response."""

@@ -19,6 +19,10 @@ import pandas as pd
 from pydantic import BaseModel, ConfigDict
 
 
+class InsufficientDataError(Exception):
+    """Raised when there is not enough candle data to run a strategy."""
+
+
 class SignalDirection(str, Enum):
     BUY = "BUY"
     SELL = "SELL"

@@ -31,89 +31,122 @@ branch_labels = None
 depends_on = None
 
 
+def _table_exists(table_name: str) -> bool:
+    """Return True if *table_name* exists in the current schema."""
+    result = op.get_bind().execute(
+        sa.text(
+            "SELECT 1 FROM information_schema.tables "
+            "WHERE table_schema = 'public' AND table_name = :t"
+        ),
+        {"t": table_name},
+    )
+    return result.fetchone() is not None
+
+
+def _column_exists(table_name: str, column_name: str) -> bool:
+    """Return True if *column_name* exists in *table_name*."""
+    result = op.get_bind().execute(
+        sa.text(
+            "SELECT 1 FROM information_schema.columns "
+            "WHERE table_schema = 'public' "
+            "AND table_name = :t AND column_name = :c"
+        ),
+        {"t": table_name, "c": column_name},
+    )
+    return result.fetchone() is not None
+
+
 def upgrade() -> None:
     # -----------------------------------------------------------------------
     # 1. Candle table — widen symbol and price columns, add source
     # -----------------------------------------------------------------------
-    op.execute(
-        "ALTER TABLE candles ALTER COLUMN symbol TYPE VARCHAR(20)"
-    )
-    op.execute(
-        "ALTER TABLE candles ALTER COLUMN open TYPE NUMERIC(18,8) USING open::NUMERIC(18,8)"
-    )
-    op.execute(
-        "ALTER TABLE candles ALTER COLUMN high TYPE NUMERIC(18,8) USING high::NUMERIC(18,8)"
-    )
-    op.execute(
-        "ALTER TABLE candles ALTER COLUMN low TYPE NUMERIC(18,8) USING low::NUMERIC(18,8)"
-    )
-    op.execute(
-        "ALTER TABLE candles ALTER COLUMN close TYPE NUMERIC(18,8) USING close::NUMERIC(18,8)"
-    )
-    op.execute(
-        "ALTER TABLE candles ALTER COLUMN volume TYPE NUMERIC(24,8) USING volume::NUMERIC(24,8)"
-    )
-    op.add_column(
-        "candles",
-        sa.Column(
-            "source",
-            sa.String(20),
-            nullable=False,
-            server_default="twelve_data",
-        ),
-    )
+    if _table_exists("candles"):
+        op.execute(
+            "ALTER TABLE candles ALTER COLUMN symbol TYPE VARCHAR(20)"
+        )
+        op.execute(
+            "ALTER TABLE candles ALTER COLUMN open TYPE NUMERIC(18,8) USING open::NUMERIC(18,8)"
+        )
+        op.execute(
+            "ALTER TABLE candles ALTER COLUMN high TYPE NUMERIC(18,8) USING high::NUMERIC(18,8)"
+        )
+        op.execute(
+            "ALTER TABLE candles ALTER COLUMN low TYPE NUMERIC(18,8) USING low::NUMERIC(18,8)"
+        )
+        op.execute(
+            "ALTER TABLE candles ALTER COLUMN close TYPE NUMERIC(18,8) USING close::NUMERIC(18,8)"
+        )
+        op.execute(
+            "ALTER TABLE candles ALTER COLUMN volume TYPE NUMERIC(24,8) USING volume::NUMERIC(24,8)"
+        )
+        if not _column_exists("candles", "source"):
+            op.add_column(
+                "candles",
+                sa.Column(
+                    "source",
+                    sa.String(20),
+                    nullable=False,
+                    server_default="twelve_data",
+                ),
+            )
 
     # -----------------------------------------------------------------------
     # 2. Signal table — widen symbol and price columns
     # -----------------------------------------------------------------------
-    op.execute(
-        "ALTER TABLE signals ALTER COLUMN symbol TYPE VARCHAR(20)"
-    )
-    op.execute(
-        "ALTER TABLE signals ALTER COLUMN entry_price TYPE NUMERIC(18,8) "
-        "USING entry_price::NUMERIC(18,8)"
-    )
-    op.execute(
-        "ALTER TABLE signals ALTER COLUMN stop_loss TYPE NUMERIC(18,8) "
-        "USING stop_loss::NUMERIC(18,8)"
-    )
-    op.execute(
-        "ALTER TABLE signals ALTER COLUMN take_profit_1 TYPE NUMERIC(18,8) "
-        "USING take_profit_1::NUMERIC(18,8)"
-    )
-    op.execute(
-        "ALTER TABLE signals ALTER COLUMN take_profit_2 TYPE NUMERIC(18,8) "
-        "USING take_profit_2::NUMERIC(18,8)"
-    )
+    if _table_exists("signals"):
+        op.execute(
+            "ALTER TABLE signals ALTER COLUMN symbol TYPE VARCHAR(20)"
+        )
+        op.execute(
+            "ALTER TABLE signals ALTER COLUMN entry_price TYPE NUMERIC(18,8) "
+            "USING entry_price::NUMERIC(18,8)"
+        )
+        op.execute(
+            "ALTER TABLE signals ALTER COLUMN stop_loss TYPE NUMERIC(18,8) "
+            "USING stop_loss::NUMERIC(18,8)"
+        )
+        op.execute(
+            "ALTER TABLE signals ALTER COLUMN take_profit_1 TYPE NUMERIC(18,8) "
+            "USING take_profit_1::NUMERIC(18,8)"
+        )
+        op.execute(
+            "ALTER TABLE signals ALTER COLUMN take_profit_2 TYPE NUMERIC(18,8) "
+            "USING take_profit_2::NUMERIC(18,8)"
+        )
 
     # -----------------------------------------------------------------------
     # 3. Outcome table — widen exit_price, add pnl_usdt
     # -----------------------------------------------------------------------
-    op.execute(
-        "ALTER TABLE outcomes ALTER COLUMN exit_price TYPE NUMERIC(18,8) "
-        "USING exit_price::NUMERIC(18,8)"
-    )
-    op.add_column(
-        "outcomes",
-        sa.Column("pnl_usdt", sa.Numeric(18, 8), nullable=True),
-    )
+    if _table_exists("outcomes"):
+        op.execute(
+            "ALTER TABLE outcomes ALTER COLUMN exit_price TYPE NUMERIC(18,8) "
+            "USING exit_price::NUMERIC(18,8)"
+        )
+        if not _column_exists("outcomes", "pnl_usdt"):
+            op.add_column(
+                "outcomes",
+                sa.Column("pnl_usdt", sa.Numeric(18, 8), nullable=True),
+            )
 
     # -----------------------------------------------------------------------
     # 4. Strategy table — add asset_class and symbols
     # -----------------------------------------------------------------------
-    op.add_column(
-        "strategies",
-        sa.Column(
-            "asset_class",
-            sa.String(20),
-            nullable=False,
-            server_default="forex",
-        ),
-    )
-    op.add_column(
-        "strategies",
-        sa.Column("symbols", sa.Text, nullable=True),
-    )
+    if _table_exists("strategies"):
+        if not _column_exists("strategies", "asset_class"):
+            op.add_column(
+                "strategies",
+                sa.Column(
+                    "asset_class",
+                    sa.String(20),
+                    nullable=False,
+                    server_default="forex",
+                ),
+            )
+        if not _column_exists("strategies", "symbols"):
+            op.add_column(
+                "strategies",
+                sa.Column("symbols", sa.Text, nullable=True),
+            )
 
     # -----------------------------------------------------------------------
     # 5. Create crypto_fee_configs table

@@ -4,8 +4,9 @@ All concrete strategies inherit from BaseStrategy and must implement
 ``generate_signals()``.
 
 Exports:
-    BaseStrategy    -- abstract base class
-    CandidateSignal -- pydantic model for unvalidated signal candidates
+    BaseStrategy         -- abstract base class
+    CandidateSignal      -- pydantic model for unvalidated signal candidates
+    InsufficientDataError -- raised when there is not enough data to generate signals
 """
 
 from __future__ import annotations
@@ -17,6 +18,10 @@ from typing import ClassVar
 
 import pandas as pd
 from pydantic import BaseModel, ConfigDict
+
+
+class InsufficientDataError(Exception):
+    """Raised when a strategy does not have enough candle data to generate signals."""
 
 
 class SignalDirection(str, Enum):

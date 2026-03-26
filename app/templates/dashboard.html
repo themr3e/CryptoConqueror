@@ -180,6 +180,127 @@
     @media (max-width: 900px) {
       .two-col { grid-template-columns: 1fr; }
     }
+
+    /* ── Settings section ──────────────────────────────────────────────── */
+    .settings-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
+      gap: 16px;
+    }
+    .settings-group {
+      background: #161b22;
+      border: 1px solid #30363d;
+      border-radius: 8px;
+      padding: 16px;
+    }
+    .settings-group-title {
+      font-size: 12px;
+      font-weight: 600;
+      text-transform: uppercase;
+      letter-spacing: 0.6px;
+      color: #58a6ff;
+      margin-bottom: 14px;
+      padding-bottom: 8px;
+      border-bottom: 1px solid #30363d;
+    }
+    .form-row {
+      display: flex;
+      flex-direction: column;
+      gap: 5px;
+      margin-bottom: 12px;
+    }
+    .form-row:last-child { margin-bottom: 0; }
+    .form-row label {
+      font-size: 11px;
+      font-weight: 600;
+      text-transform: uppercase;
+      letter-spacing: 0.4px;
+      color: #8b949e;
+    }
+    .form-row input[type="text"],
+    .form-row input[type="password"],
+    .form-row input[type="number"] {
+      background: #0d1117;
+      border: 1px solid #30363d;
+      border-radius: 6px;
+      color: #c9d1d9;
+      font-size: 13px;
+      padding: 7px 10px;
+      outline: none;
+      transition: border-color 0.15s;
+      width: 100%;
+    }
+    .form-row input:focus { border-color: #58a6ff; }
+    .form-row input::placeholder { color: #484f58; }
+    .key-status-row {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+    .key-status-row input { flex: 1; }
+
+    /* Toggle switch */
+    .toggle-row {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+    }
+    .toggle {
+      position: relative;
+      display: inline-block;
+      width: 40px;
+      height: 22px;
+      flex-shrink: 0;
+    }
+    .toggle input { opacity: 0; width: 0; height: 0; }
+    .toggle-slider {
+      position: absolute;
+      cursor: pointer;
+      top: 0; left: 0; right: 0; bottom: 0;
+      background: #30363d;
+      border-radius: 22px;
+      transition: background 0.2s;
+    }
+    .toggle-slider:before {
+      position: absolute;
+      content: "";
+      height: 16px; width: 16px;
+      left: 3px; bottom: 3px;
+      background: #8b949e;
+      border-radius: 50%;
+      transition: transform 0.2s, background 0.2s;
+    }
+    .toggle input:checked + .toggle-slider { background: rgba(63,185,80,0.25); }
+    .toggle input:checked + .toggle-slider:before {
+      transform: translateX(18px);
+      background: #3fb950;
+    }
+    .toggle-label { font-size: 13px; color: #c9d1d9; }
+
+    .save-btn {
+      background: #238636;
+      border: 1px solid #2ea043;
+      color: #fff;
+      padding: 8px 20px;
+      border-radius: 6px;
+      cursor: pointer;
+      font-size: 13px;
+      font-weight: 600;
+      transition: background 0.15s;
+    }
+    .save-btn:hover { background: #2ea043; }
+    .save-btn:disabled { opacity: 0.5; cursor: default; }
+
+    .settings-notice {
+      background: rgba(88,166,255,0.08);
+      border: 1px solid rgba(88,166,255,0.25);
+      border-radius: 6px;
+      padding: 10px 14px;
+      font-size: 12px;
+      color: #8b949e;
+      margin-bottom: 16px;
+    }
+    .settings-notice strong { color: #58a6ff; }
   </style>
 </head>
 <body>
@@ -190,6 +311,7 @@
     <a href="/chart/">Chart</a>
     <a href="/health">Health</a>
     <a href="/status">Status JSON</a>
+    <a href="#settings" style="color:#58a6ff;">⚙ Settings</a>
   </nav>
 </header>
 
@@ -345,6 +467,121 @@
   </div>
 
   <p class="timestamp" id="last-updated"></p>
+
+  <!-- ── Settings & API Keys ──────────────────────────────────────────── -->
+  <div class="section" id="settings" style="margin-top: 36px; padding-top: 20px; border-top: 1px solid #30363d;">
+    <div class="section-header">
+      <div class="section-title">⚙ Settings &amp; API Keys</div>
+      <span class="badge badge-yellow" id="settings-restart-note" style="display:none;">Restart required to apply</span>
+    </div>
+
+    <div class="settings-notice">
+      <strong>Note:</strong> Changes are saved to the <code>.env</code> file and take effect after the next application restart.
+      Secret fields left blank are not changed.
+    </div>
+
+    <div class="settings-grid">
+
+      <!-- Binance Futures -->
+      <div class="settings-group">
+        <div class="settings-group-title">Binance Futures</div>
+
+        <div class="form-row">
+          <label>Trading Mode</label>
+          <div class="toggle-row">
+            <label class="toggle">
+              <input type="checkbox" id="binance_testnet" onchange="updateTestnetLabel()">
+              <span class="toggle-slider"></span>
+            </label>
+            <span class="toggle-label" id="binance_testnet_label">Testnet (paper money)</span>
+          </div>
+        </div>
+
+        <div class="form-row">
+          <label>API Key <span id="binance_key_status"></span></label>
+          <input type="password" id="binance_futures_api_key"
+                 placeholder="Enter new key to replace" autocomplete="off">
+        </div>
+
+        <div class="form-row">
+          <label>API Secret <span id="binance_secret_status"></span></label>
+          <input type="password" id="binance_futures_api_secret"
+                 placeholder="Enter new secret to replace" autocomplete="off">
+        </div>
+
+        <div class="form-row">
+          <label>Leverage (×)</label>
+          <input type="number" id="binance_leverage" min="1" max="125" step="1">
+        </div>
+      </div>
+
+      <!-- Crypto Trading -->
+      <div class="settings-group">
+        <div class="settings-group-title">Crypto Trading</div>
+
+        <div class="form-row">
+          <label>Enable Crypto Pipeline</label>
+          <div class="toggle-row">
+            <label class="toggle">
+              <input type="checkbox" id="crypto_enabled" onchange="updateCryptoLabel()">
+              <span class="toggle-slider"></span>
+            </label>
+            <span class="toggle-label" id="crypto_enabled_label">Disabled</span>
+          </div>
+        </div>
+
+        <div class="form-row">
+          <label>Symbols (comma-separated)</label>
+          <input type="text" id="crypto_symbols" placeholder="BTCUSDT,ETHUSDT">
+        </div>
+
+        <div class="form-row">
+          <label>Account Balance (USDT)</label>
+          <input type="number" id="account_balance" min="0" step="100">
+        </div>
+      </div>
+
+      <!-- Telegram -->
+      <div class="settings-group">
+        <div class="settings-group-title">Telegram Notifications (optional)</div>
+
+        <div class="form-row">
+          <label>Bot Token <span id="telegram_token_status"></span></label>
+          <input type="password" id="telegram_bot_token"
+                 placeholder="Enter new token to replace" autocomplete="off">
+        </div>
+
+        <div class="form-row">
+          <label>Chat ID</label>
+          <input type="text" id="telegram_chat_id" placeholder="e.g. -100123456789">
+        </div>
+      </div>
+
+      <!-- Gold / XAUUSD -->
+      <div class="settings-group">
+        <div class="settings-group-title">Gold / XAUUSD (optional — crypto-only is fine)</div>
+
+        <div class="form-row">
+          <label>Twelve Data API Key <span id="twelve_key_status"></span></label>
+          <input type="password" id="twelve_data_api_key"
+                 placeholder="Enter key to enable Gold trading" autocomplete="off">
+        </div>
+
+        <div style="font-size:11px; color:#8b949e; margin-top: 6px;">
+          Leave blank if you only trade crypto. Get a free key at
+          <a href="https://twelvedata.com" target="_blank" rel="noopener"
+             style="color:#58a6ff;">twelvedata.com</a>
+        </div>
+      </div>
+
+    </div><!-- /settings-grid -->
+
+    <div style="margin-top: 20px; display: flex; gap: 14px; align-items: center;">
+      <button class="save-btn" id="save-btn" onclick="saveSettings()">Save Settings</button>
+      <span id="settings-status" style="font-size: 13px; color: #8b949e;"></span>
+    </div>
+  </div><!-- /settings section -->
+
 </main>
 
 <script>
@@ -493,6 +730,116 @@
 
   loadData();
   setInterval(loadData, 60000); // Auto-refresh every 60s
+
+  // ── Settings ──────────────────────────────────────────────────────────
+
+  function keyStatusBadge(isSet) {
+    return isSet
+      ? '<span class="badge badge-green" style="font-size:10px;">✓ Set</span>'
+      : '<span class="badge badge-gray"  style="font-size:10px;">Not set</span>';
+  }
+
+  function updateTestnetLabel() {
+    const checked = document.getElementById('binance_testnet').checked;
+    document.getElementById('binance_testnet_label').textContent =
+      checked ? 'Testnet (paper money — safe)' : 'Mainnet (REAL MONEY)';
+  }
+
+  function updateCryptoLabel() {
+    const checked = document.getElementById('crypto_enabled').checked;
+    document.getElementById('crypto_enabled_label').textContent =
+      checked ? 'Enabled' : 'Disabled';
+  }
+
+  async function loadSettings() {
+    try {
+      const resp = await fetch('/settings/');
+      if (!resp.ok) return;
+      const s = await resp.json();
+
+      document.getElementById('binance_testnet').checked = s.binance_testnet;
+      updateTestnetLabel();
+      document.getElementById('binance_key_status').innerHTML    = keyStatusBadge(s.binance_futures_api_key_set);
+      document.getElementById('binance_secret_status').innerHTML = keyStatusBadge(s.binance_futures_api_secret_set);
+      document.getElementById('binance_leverage').value = s.binance_leverage;
+
+      document.getElementById('crypto_enabled').checked = s.crypto_enabled;
+      updateCryptoLabel();
+      document.getElementById('crypto_symbols').value  = s.crypto_symbols;
+      document.getElementById('account_balance').value = s.account_balance;
+
+      document.getElementById('telegram_token_status').innerHTML = keyStatusBadge(s.telegram_bot_token_set);
+      document.getElementById('telegram_chat_id').value = s.telegram_chat_id;
+
+      document.getElementById('twelve_key_status').innerHTML = keyStatusBadge(s.twelve_data_api_key_set);
+    } catch (e) {
+      console.error('Settings load error', e);
+    }
+  }
+
+  async function saveSettings() {
+    const btn = document.getElementById('save-btn');
+    const status = document.getElementById('settings-status');
+    btn.disabled = true;
+    status.textContent = 'Saving…';
+    status.style.color = '#8b949e';
+
+    const payload = {
+      binance_testnet:  document.getElementById('binance_testnet').checked,
+      binance_leverage: parseInt(document.getElementById('binance_leverage').value, 10),
+      crypto_enabled:   document.getElementById('crypto_enabled').checked,
+      crypto_symbols:   document.getElementById('crypto_symbols').value.trim(),
+      account_balance:  parseFloat(document.getElementById('account_balance').value),
+      telegram_chat_id: document.getElementById('telegram_chat_id').value.trim(),
+    };
+
+    // Only include secret fields if the user typed something
+    const secretFields = [
+      ['binance_futures_api_key',    'binance_futures_api_key'],
+      ['binance_futures_api_secret', 'binance_futures_api_secret'],
+      ['telegram_bot_token',         'telegram_bot_token'],
+      ['twelve_data_api_key',        'twelve_data_api_key'],
+    ];
+    for (const [inputId, payloadKey] of secretFields) {
+      const v = document.getElementById(inputId).value.trim();
+      if (v) payload[payloadKey] = v;
+    }
+
+    try {
+      const resp = await fetch('/settings/', {
+        method:  'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body:    JSON.stringify(payload),
+      });
+      const result = await resp.json();
+
+      if (resp.ok) {
+        if (result.updated && result.updated.length > 0) {
+          status.textContent = `✓ Saved (${result.updated.length} key(s) updated). Restart app to apply.`;
+          status.style.color = '#3fb950';
+          document.getElementById('settings-restart-note').style.display = '';
+          // Clear secret input fields after save
+          for (const [inputId] of secretFields) {
+            document.getElementById(inputId).value = '';
+          }
+          await loadSettings(); // Refresh badges
+        } else {
+          status.textContent = 'No changes detected.';
+          status.style.color = '#8b949e';
+        }
+      } else {
+        status.textContent = `Error: ${result.detail || 'Save failed'}`;
+        status.style.color = '#f85149';
+      }
+    } catch (e) {
+      status.textContent = 'Network error — could not save.';
+      status.style.color = '#f85149';
+    }
+
+    btn.disabled = false;
+  }
+
+  loadSettings();
 </script>
 </body>
 </html>

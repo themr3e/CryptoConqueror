@@ -142,21 +142,27 @@ async def bootstrap_data() -> None:
 @asynccontextmanager
 async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     """Application lifespan: setup on startup, teardown on shutdown."""
+    import asyncio
+
     # Configure structured logging first so all startup logs are formatted
     setup_logging()
 
     logger.info("Starting QuantLive application...")
 
-    # Bootstrap data (seed strategies + backfill candles)
-    try:
-        await bootstrap_data()
-    except Exception:
-        logger.opt(exception=True).error("Bootstrap failed — continuing anyway")
-
-    # Start background scheduler
+    # Start scheduler immediately so the server can accept healthcheck requests
     scheduler = create_scheduler()
     register_jobs(scheduler)
     scheduler.start()
+
+    # Run bootstrap in the background — does NOT block server startup
+    async def _bootstrap_safe() -> None:
+        try:
+            await bootstrap_data()
+        except Exception:
+            logger.opt(exception=True).error("Bootstrap failed — continuing anyway")
+
+    asyncio.create_task(_bootstrap_safe())
+
     logger.info("QuantLive application started — scheduler running")
 
     yield

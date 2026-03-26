@@ -1,0 +1,163 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>XAUUSD Chart — QuantLive</title>
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body {
+      background: #0d1117;
+      color: #c9d1d9;
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Helvetica, Arial, sans-serif;
+      font-size: 14px;
+    }
+    header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 12px 20px;
+      background: #161b22;
+      border-bottom: 1px solid #30363d;
+    }
+    header h1 { font-size: 18px; color: #58a6ff; }
+    header a {
+      color: #58a6ff;
+      text-decoration: none;
+      font-size: 13px;
+    }
+    header a:hover { text-decoration: underline; }
+    #chart-container {
+      width: 100%;
+      height: calc(100vh - 52px);
+    }
+    #chart {
+      width: 100%;
+      height: 100%;
+    }
+    .legend {
+      position: absolute;
+      top: 70px;
+      left: 20px;
+      background: rgba(22, 27, 34, 0.9);
+      border: 1px solid #30363d;
+      border-radius: 6px;
+      padding: 8px 12px;
+      font-size: 12px;
+      z-index: 10;
+      pointer-events: none;
+    }
+    .legend-item { display: flex; align-items: center; gap: 6px; margin: 3px 0; }
+    .dot { width: 8px; height: 8px; border-radius: 50%; flex-shrink: 0; }
+    .dot-buy  { background: #3fb950; }
+    .dot-sell { background: #f85149; }
+    .dot-tp   { background: #58a6ff; }
+    .dot-sl   { background: #e3b341; }
+  </style>
+</head>
+<body>
+  <header>
+    <h1>XAUUSD · H1 · QuantLive</h1>
+    <a href="/dashboard/">← Dashboard</a>
+  </header>
+
+  <div id="chart-container">
+    <div id="chart"></div>
+  </div>
+
+  <div class="legend">
+    <div class="legend-item"><div class="dot dot-buy"></div> BUY signal</div>
+    <div class="legend-item"><div class="dot dot-sell"></div> SELL signal</div>
+    <div class="legend-item"><div class="dot dot-tp"></div> Take profit hit</div>
+    <div class="legend-item"><div class="dot dot-sl"></div> Stop loss hit</div>
+  </div>
+
+  <script src="https://unpkg.com/lightweight-charts@4.1.3/dist/lightweight-charts.standalone.production.js"></script>
+  <script>
+    (async () => {
+      const container = document.getElementById('chart');
+
+      const chart = LightweightCharts.createChart(container, {
+        layout: {
+          background: { color: '#0d1117' },
+          textColor: '#c9d1d9',
+        },
+        grid: {
+          vertLines: { color: '#21262d' },
+          horzLines: { color: '#21262d' },
+        },
+        crosshair: { mode: LightweightCharts.CrosshairMode.Normal },
+        rightPriceScale: { borderColor: '#30363d' },
+        timeScale: {
+          borderColor: '#30363d',
+          timeVisible: true,
+          secondsVisible: false,
+        },
+        width: container.clientWidth,
+        height: container.clientHeight,
+      });
+
+      // Candlestick series
+      const candleSeries = chart.addCandlestickSeries({
+        upColor: '#3fb950',
+        downColor: '#f85149',
+        borderUpColor: '#3fb950',
+        borderDownColor: '#f85149',
+        wickUpColor: '#3fb950',
+        wickDownColor: '#f85149',
+      });
+
+      // Fetch candles
+      try {
+        const resp = await fetch('/chart/candles');
+        const candles = await resp.json();
+        candleSeries.setData(candles);
+      } catch (e) {
+        console.error('Failed to load candles', e);
+      }
+
+      // Fetch signals and overlay markers
+      try {
+        const resp = await fetch('/chart/signals');
+        const signals = await resp.json();
+
+        const markers = signals.map(s => {
+          const isBuy = s.direction === 'BUY';
+          let color;
+          if (s.outcome === 'tp1_hit' || s.outcome === 'tp2_hit') {
+            color = '#58a6ff';
+          } else if (s.outcome === 'sl_hit') {
+            color = '#e3b341';
+          } else {
+            color = isBuy ? '#3fb950' : '#f85149';
+          }
+          return {
+            time: s.time,
+            position: isBuy ? 'belowBar' : 'aboveBar',
+            color: color,
+            shape: isBuy ? 'arrowUp' : 'arrowDown',
+            text: `${s.direction} ${s.confidence ? s.confidence + '%' : ''}`.trim(),
+          };
+        });
+
+        if (markers.length > 0) {
+          candleSeries.setMarkers(markers);
+        }
+      } catch (e) {
+        console.error('Failed to load signals', e);
+      }
+
+      // Responsive resize
+      const ro = new ResizeObserver(entries => {
+        for (const entry of entries) {
+          chart.applyOptions({
+            width: entry.contentRect.width,
+            height: entry.contentRect.height,
+          });
+        }
+      });
+      ro.observe(container);
+    })();
+  </script>
+</body>
+</html>

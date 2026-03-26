@@ -1,0 +1,498 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Dashboard — QuantLive</title>
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body {
+      background: #0d1117;
+      color: #c9d1d9;
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Helvetica, Arial, sans-serif;
+      font-size: 14px;
+      min-height: 100vh;
+    }
+    header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 12px 24px;
+      background: #161b22;
+      border-bottom: 1px solid #30363d;
+      position: sticky;
+      top: 0;
+      z-index: 100;
+    }
+    header h1 { font-size: 18px; color: #58a6ff; }
+    nav a {
+      color: #8b949e;
+      text-decoration: none;
+      margin-left: 20px;
+      font-size: 13px;
+      transition: color 0.15s;
+    }
+    nav a:hover { color: #c9d1d9; }
+    .badge {
+      display: inline-block;
+      padding: 2px 8px;
+      border-radius: 12px;
+      font-size: 11px;
+      font-weight: 600;
+    }
+    .badge-green { background: rgba(63,185,80,0.15); color: #3fb950; }
+    .badge-red   { background: rgba(248,81,73,0.15);  color: #f85149; }
+    .badge-gray  { background: rgba(139,148,158,0.15); color: #8b949e; }
+    .badge-blue  { background: rgba(88,166,255,0.15);  color: #58a6ff; }
+    .badge-yellow{ background: rgba(227,179,65,0.15);  color: #e3b341; }
+
+    main { padding: 24px; max-width: 1400px; margin: 0 auto; }
+
+    /* Stats row */
+    .stats-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fill, minmax(180px, 1fr));
+      gap: 16px;
+      margin-bottom: 28px;
+    }
+    .stat-card {
+      background: #161b22;
+      border: 1px solid #30363d;
+      border-radius: 8px;
+      padding: 16px;
+    }
+    .stat-card .label {
+      font-size: 11px;
+      color: #8b949e;
+      text-transform: uppercase;
+      letter-spacing: 0.5px;
+      margin-bottom: 6px;
+    }
+    .stat-card .value {
+      font-size: 24px;
+      font-weight: 600;
+      color: #f0f6fc;
+    }
+    .stat-card .sub {
+      font-size: 11px;
+      color: #8b949e;
+      margin-top: 4px;
+    }
+
+    /* Section */
+    .section { margin-bottom: 28px; }
+    .section-header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      margin-bottom: 12px;
+    }
+    .section-title {
+      font-size: 15px;
+      font-weight: 600;
+      color: #f0f6fc;
+    }
+
+    /* Table */
+    .table-wrap { overflow-x: auto; }
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      font-size: 13px;
+    }
+    th {
+      text-align: left;
+      padding: 8px 12px;
+      font-size: 11px;
+      font-weight: 600;
+      text-transform: uppercase;
+      letter-spacing: 0.5px;
+      color: #8b949e;
+      border-bottom: 1px solid #30363d;
+    }
+    td {
+      padding: 8px 12px;
+      border-bottom: 1px solid #21262d;
+      color: #c9d1d9;
+    }
+    tr:last-child td { border-bottom: none; }
+    tr:hover td { background: #161b22; }
+
+    /* Card */
+    .card {
+      background: #161b22;
+      border: 1px solid #30363d;
+      border-radius: 8px;
+      overflow: hidden;
+    }
+
+    /* Circuit breaker banner */
+    .cb-banner {
+      background: rgba(248,81,73,0.12);
+      border: 1px solid rgba(248,81,73,0.4);
+      border-radius: 8px;
+      padding: 12px 16px;
+      margin-bottom: 20px;
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      color: #f85149;
+      font-weight: 600;
+    }
+    .cb-banner.hidden { display: none; }
+
+    /* Refresh */
+    .refresh-btn {
+      background: #21262d;
+      border: 1px solid #30363d;
+      color: #c9d1d9;
+      padding: 6px 14px;
+      border-radius: 6px;
+      cursor: pointer;
+      font-size: 13px;
+      transition: background 0.15s;
+    }
+    .refresh-btn:hover { background: #30363d; }
+
+    .timestamp { color: #8b949e; font-size: 12px; }
+
+    /* Jobs */
+    .jobs-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fill, minmax(260px, 1fr));
+      gap: 12px;
+    }
+    .job-card {
+      background: #161b22;
+      border: 1px solid #30363d;
+      border-radius: 8px;
+      padding: 14px;
+    }
+    .job-name { font-weight: 600; margin-bottom: 4px; }
+    .job-meta { font-size: 12px; color: #8b949e; }
+
+    /* Two-column layout */
+    .two-col {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 20px;
+    }
+    @media (max-width: 900px) {
+      .two-col { grid-template-columns: 1fr; }
+    }
+  </style>
+</head>
+<body>
+
+<header>
+  <h1>QuantLive Dashboard</h1>
+  <nav>
+    <a href="/chart/">Chart</a>
+    <a href="/health">Health</a>
+    <a href="/status">Status JSON</a>
+  </nav>
+</header>
+
+<main>
+  <!-- Circuit breaker banner -->
+  <div class="cb-banner hidden" id="cb-banner">
+    ⚠ Circuit Breaker Active — Signal generation paused
+  </div>
+
+  <!-- Stats -->
+  <div class="stats-grid" id="stats-grid">
+    <div class="stat-card">
+      <div class="label">Active Signals</div>
+      <div class="value" id="stat-active-signals">—</div>
+    </div>
+    <div class="stat-card">
+      <div class="label">Uptime</div>
+      <div class="value" id="stat-uptime">—</div>
+    </div>
+    <div class="stat-card">
+      <div class="label">DB Status</div>
+      <div class="value" id="stat-db">—</div>
+    </div>
+    <div class="stat-card">
+      <div class="label">Last Candle</div>
+      <div class="value" id="stat-last-candle" style="font-size:13px; padding-top:4px;">—</div>
+    </div>
+    <div class="stat-card">
+      <div class="label">Last Signal</div>
+      <div class="value" id="stat-last-signal" style="font-size:13px; padding-top:4px;">—</div>
+    </div>
+  </div>
+
+  <!-- Jobs -->
+  <div class="section">
+    <div class="section-header">
+      <div class="section-title">Background Jobs</div>
+      <button class="refresh-btn" onclick="loadData()">↻ Refresh</button>
+    </div>
+    <div class="jobs-grid" id="jobs-grid">
+      <div class="job-card"><div class="job-meta">Loading...</div></div>
+    </div>
+  </div>
+
+  <div class="two-col">
+    <!-- Active Signals -->
+    <div class="section">
+      <div class="section-header">
+        <div class="section-title">Active Signals</div>
+      </div>
+      <div class="card">
+        <div class="table-wrap">
+          <table id="signals-table">
+            <thead>
+              <tr>
+                <th>Direction</th>
+                <th>Entry</th>
+                <th>SL</th>
+                <th>TP1</th>
+                <th>Confidence</th>
+                <th>Strategy</th>
+                <th>Time</th>
+              </tr>
+            </thead>
+            <tbody id="signals-body">
+              <tr><td colspan="7" style="color:#8b949e;">Loading...</td></tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+
+    <!-- Strategy Performance -->
+    <div class="section">
+      <div class="section-header">
+        <div class="section-title">Strategy Performance (30d)</div>
+      </div>
+      <div class="card">
+        <div class="table-wrap">
+          <table id="perf-table">
+            <thead>
+              <tr>
+                <th>Strategy</th>
+                <th>Win Rate</th>
+                <th>PF</th>
+                <th>Trades</th>
+                <th>Status</th>
+              </tr>
+            </thead>
+            <tbody id="perf-body">
+              <tr><td colspan="5" style="color:#8b949e;">Loading...</td></tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Backtest Results -->
+  <div class="section">
+    <div class="section-header">
+      <div class="section-title">Latest Backtest Results</div>
+    </div>
+    <div class="card">
+      <div class="table-wrap">
+        <table id="bt-table">
+          <thead>
+            <tr>
+              <th>Strategy</th>
+              <th>Win Rate</th>
+              <th>PF</th>
+              <th>Sharpe</th>
+              <th>Max DD</th>
+              <th>Expectancy</th>
+              <th>Trades</th>
+              <th>Walk-Fwd</th>
+              <th>Date</th>
+            </tr>
+          </thead>
+          <tbody id="bt-body">
+            <tr><td colspan="9" style="color:#8b949e;">Loading...</td></tr>
+          </tbody>
+        </table>
+      </div>
+    </div>
+  </div>
+
+  <!-- Optimized Parameters -->
+  <div class="section">
+    <div class="section-header">
+      <div class="section-title">Optimized Parameters</div>
+    </div>
+    <div class="card">
+      <div class="table-wrap">
+        <table id="opt-table">
+          <thead>
+            <tr>
+              <th>Strategy</th>
+              <th>Params</th>
+              <th>Win Rate</th>
+              <th>PF</th>
+              <th>Trades</th>
+              <th>Overfitted</th>
+              <th>Updated</th>
+            </tr>
+          </thead>
+          <tbody id="opt-body">
+            <tr><td colspan="7" style="color:#8b949e;">Loading...</td></tr>
+          </tbody>
+        </table>
+      </div>
+    </div>
+  </div>
+
+  <p class="timestamp" id="last-updated"></p>
+</main>
+
+<script>
+  function fmt(v, decimals = 2) {
+    if (v == null) return '—';
+    return Number(v).toFixed(decimals);
+  }
+  function pct(v) { return v == null ? '—' : (Number(v) * 100).toFixed(1) + '%'; }
+  function relTime(iso) {
+    if (!iso) return '—';
+    const d = new Date(iso);
+    const diff = Math.floor((Date.now() - d) / 1000);
+    if (diff < 60) return diff + 's ago';
+    if (diff < 3600) return Math.floor(diff/60) + 'm ago';
+    if (diff < 86400) return Math.floor(diff/3600) + 'h ago';
+    return Math.floor(diff/86400) + 'd ago';
+  }
+  function dirBadge(dir) {
+    if (dir === 'BUY') return '<span class="badge badge-green">BUY</span>';
+    if (dir === 'SELL') return '<span class="badge badge-red">SELL</span>';
+    return `<span class="badge badge-gray">${dir}</span>`;
+  }
+
+  async function loadData() {
+    try {
+      const resp = await fetch('/dashboard/data');
+      const d = await resp.json();
+
+      // Circuit breaker
+      const cb = d.system?.circuit_breaker_active;
+      document.getElementById('cb-banner').classList.toggle('hidden', !cb);
+
+      // Stats
+      document.getElementById('stat-active-signals').textContent = d.system?.active_signals ?? '—';
+      const uptime = d.system?.uptime_seconds;
+      if (uptime != null) {
+        const h = Math.floor(uptime / 3600);
+        const m = Math.floor((uptime % 3600) / 60);
+        document.getElementById('stat-uptime').textContent = `${h}h ${m}m`;
+      }
+      const dbOk = d.system?.database === 'ok';
+      document.getElementById('stat-db').innerHTML = dbOk
+        ? '<span class="badge badge-green">OK</span>'
+        : '<span class="badge badge-red">ERROR</span>';
+      document.getElementById('stat-last-candle').textContent = relTime(d.system?.last_candle_fetch);
+      document.getElementById('stat-last-signal').textContent = relTime(d.system?.last_signal_generated);
+
+      // Jobs
+      const jobsEl = document.getElementById('jobs-grid');
+      if (d.jobs && d.jobs.length) {
+        jobsEl.innerHTML = d.jobs.map(j => `
+          <div class="job-card">
+            <div class="job-name">${j.name || j.id}</div>
+            <div class="job-meta">Next: ${j.next_run ? relTime(j.next_run) : '—'}</div>
+          </div>
+        `).join('');
+      } else {
+        jobsEl.innerHTML = '<div class="job-card"><div class="job-meta">No jobs</div></div>';
+      }
+
+      // Active signals
+      const sigBody = document.getElementById('signals-body');
+      if (d.signals && d.signals.length) {
+        sigBody.innerHTML = d.signals.map(s => `
+          <tr>
+            <td>${dirBadge(s.direction)}</td>
+            <td>${fmt(s.entry_price)}</td>
+            <td>${fmt(s.stop_loss)}</td>
+            <td>${fmt(s.take_profit_1)}</td>
+            <td>${fmt(s.confidence)}%</td>
+            <td><span class="badge badge-gray">${s.strategy || '—'}</span></td>
+            <td class="timestamp">${relTime(s.created_at)}</td>
+          </tr>
+        `).join('');
+      } else {
+        sigBody.innerHTML = '<tr><td colspan="7" style="color:#8b949e;">No active signals</td></tr>';
+      }
+
+      // Performance
+      const perfBody = document.getElementById('perf-body');
+      if (d.performance && d.performance.length) {
+        perfBody.innerHTML = d.performance.map(p => `
+          <tr>
+            <td>${p.strategy}</td>
+            <td>${pct(p.win_rate)}</td>
+            <td>${fmt(p.profit_factor)}</td>
+            <td>${p.total_signals ?? '—'}</td>
+            <td>${p.is_degraded
+              ? '<span class="badge badge-red">Degraded</span>'
+              : '<span class="badge badge-green">OK</span>'}</td>
+          </tr>
+        `).join('');
+      } else {
+        perfBody.innerHTML = '<tr><td colspan="5" style="color:#8b949e;">No data</td></tr>';
+      }
+
+      // Backtests
+      const btBody = document.getElementById('bt-body');
+      if (d.backtests && d.backtests.length) {
+        btBody.innerHTML = d.backtests.map(b => `
+          <tr>
+            <td>${b.strategy}</td>
+            <td>${pct(b.win_rate)}</td>
+            <td>${fmt(b.profit_factor)}</td>
+            <td>${fmt(b.sharpe_ratio)}</td>
+            <td>${pct(b.max_drawdown)}</td>
+            <td>${fmt(b.expectancy)}</td>
+            <td>${b.total_trades}</td>
+            <td>${b.is_walk_forward
+              ? '<span class="badge badge-blue">WF</span>'
+              : '<span class="badge badge-gray">Full</span>'}</td>
+            <td class="timestamp">${relTime(b.created_at)}</td>
+          </tr>
+        `).join('');
+      } else {
+        btBody.innerHTML = '<tr><td colspan="9" style="color:#8b949e;">No data</td></tr>';
+      }
+
+      // Optimized params
+      const optBody = document.getElementById('opt-body');
+      if (d.optimized_params && d.optimized_params.length) {
+        optBody.innerHTML = d.optimized_params.map(o => `
+          <tr>
+            <td>${o.strategy_name}</td>
+            <td style="font-family: monospace; font-size:11px;">${JSON.stringify(o.params)}</td>
+            <td>${pct(o.win_rate)}</td>
+            <td>${fmt(o.profit_factor)}</td>
+            <td>${o.total_trades}</td>
+            <td>${o.is_overfitted
+              ? '<span class="badge badge-yellow">Yes</span>'
+              : '<span class="badge badge-green">No</span>'}</td>
+            <td class="timestamp">${relTime(o.created_at)}</td>
+          </tr>
+        `).join('');
+      } else {
+        optBody.innerHTML = '<tr><td colspan="7" style="color:#8b949e;">No data</td></tr>';
+      }
+
+      document.getElementById('last-updated').textContent =
+        'Last updated: ' + new Date().toLocaleTimeString();
+
+    } catch (e) {
+      console.error('Dashboard load error', e);
+    }
+  }
+
+  loadData();
+  setInterval(loadData, 60000); // Auto-refresh every 60s
+</script>
+</body>
+</html>

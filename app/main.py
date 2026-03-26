@@ -8,106 +8,132 @@ from loguru import logger
 from sqlalchemy import func, select
 
 from app.config import get_settings
-from app.database import async_session_factory, engine
+from app.database import async_sessionmaker, engine
 from app.utils.logging import setup_logging
-from app.workers.scheduler import register_jobs, scheduler
+from app.workers.scheduler import create_scheduler
+from app.workers.jobs import register_jobs
 from app.api.candles import router as candles_router
 from app.api.chart import router as chart_router
 from app.api.dashboard import router as dashboard_router
 from app.api.health import router as health_router
 from app.api.status import router as status_router
 
+# ---------------------------------------------------------------------------
+# Strategy → asset_class mapping
+# ---------------------------------------------------------------------------
+_STRATEGY_ASSET_CLASS: dict[str, str] = {
+    "liquidity_sweep":       "forex",
+    "trend_continuation":    "forex",
+    "breakout_expansion":    "forex",
+    "ema_momentum":          "forex",
+    "crypto_momentum":       "crypto_futures",
+    "crypto_breakout":       "crypto_futures",
+}
+
+_CRYPTO_STRATEGY_SYMBOLS = '["BTCUSDT","ETHUSDT"]'
+
 
 async def bootstrap_data() -> None:
-    """Seed strategies, backfill candles, and run backtests if DB is empty.
+    """Seed strategies and backfill candles on first deploy.
 
-    This ensures a fresh Railway deploy becomes operational immediately
-    instead of waiting hours for scheduled jobs to populate data.
+    - XAUUSD strategies + candles: only when TWELVE_DATA_API_KEY is set.
+    - Crypto strategies + candles: only when CRYPTO_ENABLED=true.
+    - At least one must be enabled or bootstrap logs a warning.
     """
-    from app.models.candle import Candle
-    from app.models.strategy import Strategy
-    from app.models.backtest_result import BacktestResult
-    from app.strategies.base import BaseStrategy
-    import app.strategies.liquidity_sweep  # noqa: F401
-    import app.strategies.trend_continuation  # noqa: F401
-    import app.strategies.breakout_expansion  # noqa: F401
-    import app.strategies.ema_momentum  # noqa: F401
-    from app.services.candle_ingestor import CandleIngestor
-
     settings = get_settings()
 
-    async with async_session_factory() as session:
-        # --- Step 1: Seed strategies ---
-        existing = await session.execute(select(Strategy))
-        existing_names = {s.name for s in existing.scalars().all()}
+    # Import all strategies to populate the registry
+    import app.strategies  # noqa: F401 — triggers all self-registrations
+    from app.strategies.base import BaseStrategy
+    from app.models.candle import Candle
+    from app.models.strategy import Strategy
+
+    async with async_sessionmaker() as session:
+        # ── Step 1: Seed strategies with correct asset_class ──────────────
+        existing_result = await session.execute(select(Strategy))
+        existing_names = {s.name for s in existing_result.scalars().all()}
         registry = BaseStrategy.get_registry()
-        created = []
-        for name in registry:
-            if name not in existing_names:
-                session.add(Strategy(name=name, is_active=True))
-                created.append(name)
+
+        created: list[str] = []
+        for name, cls in registry.items():
+            if name in existing_names:
+                continue
+            asset_class = getattr(cls, "ASSET_CLASS", None) or _STRATEGY_ASSET_CLASS.get(name, "forex")
+            symbols = _CRYPTO_STRATEGY_SYMBOLS if asset_class == "crypto_futures" else None
+            session.add(Strategy(
+                name=name,
+                is_active=True,
+                asset_class=asset_class,
+                symbols=symbols,
+            ))
+            created.append(name)
+
         if created:
             await session.commit()
-            logger.info("Bootstrap: seeded strategies: {}", created)
+            logger.info("Bootstrap: seeded {} strategies: {}", len(created), created)
         else:
-            logger.info("Bootstrap: strategies already exist: {}", list(existing_names))
+            logger.info("Bootstrap: all strategies already exist")
 
-        # --- Step 2: Backfill H1 candles if insufficient ---
-        result = await session.execute(
-            select(func.count()).select_from(Candle).where(
-                Candle.symbol == "XAUUSD", Candle.timeframe == "H1"
-            )
-        )
-        h1_count = result.scalar() or 0
-        min_needed = 800  # 30 days * 24 bars + buffer
-
-        if h1_count < min_needed:
-            logger.info("Bootstrap: only {} H1 candles (need {}), backfilling...", h1_count, min_needed)
+        # ── Step 2: Backfill XAUUSD candles (only if Twelve Data key set) ──
+        if settings.xauusd_enabled:
+            from app.services.candle_ingestor import CandleIngestor
             ingestor = CandleIngestor(api_key=settings.twelve_data_api_key)
-            try:
-                candles = await ingestor.fetch_candles("XAUUSD", "H1", outputsize=5000)
-                count = await ingestor.upsert_candles(session, candles)
-                logger.info("Bootstrap: backfilled {} H1 candles", count)
-            except Exception:
-                logger.exception("Bootstrap: H1 backfill failed")
-        else:
-            logger.info("Bootstrap: H1 candles OK ({} rows)", h1_count)
 
-        # Also backfill H4 and D1 if empty (needed for confluence checks)
-        for tf, size in [("H4", 5000), ("D1", 5000)]:
-            result = await session.execute(
-                select(func.count()).select_from(Candle).where(
-                    Candle.symbol == "XAUUSD", Candle.timeframe == tf
+            for tf, min_bars in [("H1", 800), ("H4", 100), ("D1", 100)]:
+                count_result = await session.execute(
+                    select(func.count()).select_from(Candle).where(
+                        Candle.symbol == "XAUUSD", Candle.timeframe == tf
+                    )
                 )
-            )
-            tf_count = result.scalar() or 0
-            if tf_count < 100:
-                logger.info("Bootstrap: backfilling {} candles...", tf)
-                ingestor = CandleIngestor(api_key=settings.twelve_data_api_key)
-                try:
-                    candles = await ingestor.fetch_candles("XAUUSD", tf, outputsize=size)
-                    count = await ingestor.upsert_candles(session, candles)
-                    logger.info("Bootstrap: backfilled {} {} candles", count, tf)
-                except Exception:
-                    logger.exception("Bootstrap: {} backfill failed", tf)
+                existing_bars = count_result.scalar() or 0
+                if existing_bars < min_bars:
+                    logger.info("Bootstrap: backfilling XAUUSD {} ({} bars exist, need {})...",
+                                tf, existing_bars, min_bars)
+                    try:
+                        candles = await ingestor.fetch_candles("XAUUSD", tf, outputsize=5000)
+                        stored = await ingestor.upsert_candles(session, candles)
+                        logger.info("Bootstrap: backfilled {} XAUUSD {} candles", stored, tf)
+                    except Exception:
+                        logger.opt(exception=True).warning("Bootstrap: XAUUSD {} backfill failed", tf)
+                else:
+                    logger.info("Bootstrap: XAUUSD {} OK ({} bars)", tf, existing_bars)
+        else:
+            logger.info("Bootstrap: XAUUSD disabled (no TWELVE_DATA_API_KEY) — skipping Gold candles")
 
-        # --- Step 3: Run backtests if none exist ---
-        async with async_session_factory() as session:
-            result = await session.execute(
-                select(func.count()).select_from(BacktestResult)
-            )
-            bt_count = result.scalar() or 0
+        # ── Step 3: Backfill crypto candles (only if CRYPTO_ENABLED=true) ──
+        if settings.crypto_enabled:
+            from app.services.crypto_candle_ingestor import CryptoCandleIngestor
+            crypto_ingestor = CryptoCandleIngestor()
 
-            if bt_count == 0:
-                logger.info("Bootstrap: no backtest results, running initial backtests...")
-                try:
-                    from app.workers.jobs import run_daily_backtests
-                    await run_daily_backtests()
-                    logger.info("Bootstrap: initial backtests complete")
-                except Exception:
-                    logger.exception("Bootstrap: backtests failed")
-            else:
-                logger.info("Bootstrap: backtest results OK ({} rows)", bt_count)
+            for symbol in settings.crypto_symbol_list:
+                for tf, min_bars in [("H1", 800), ("H4", 100), ("D1", 100)]:
+                    count_result = await session.execute(
+                        select(func.count()).select_from(Candle).where(
+                            Candle.symbol == symbol, Candle.timeframe == tf
+                        )
+                    )
+                    existing_bars = count_result.scalar() or 0
+                    if existing_bars < min_bars:
+                        logger.info("Bootstrap: backfilling {} {} ({} bars exist)...",
+                                    symbol, tf, existing_bars)
+                        try:
+                            stored = await crypto_ingestor.fetch_and_store(session, symbol, tf, limit=1500)
+                            logger.info("Bootstrap: backfilled {} {} {} candles", stored, symbol, tf)
+                        except Exception:
+                            logger.opt(exception=True).warning(
+                                "Bootstrap: {} {} backfill failed", symbol, tf
+                            )
+                    else:
+                        logger.info("Bootstrap: {} {} OK ({} bars)", symbol, tf, existing_bars)
+        else:
+            logger.info("Bootstrap: crypto disabled (CRYPTO_ENABLED=false) — skipping crypto candles")
+
+        # ── Warning if nothing is enabled ─────────────────────────────────
+        if not settings.xauusd_enabled and not settings.crypto_enabled:
+            logger.warning(
+                "Bootstrap: BOTH XAUUSD and crypto are disabled! "
+                "Set TWELVE_DATA_API_KEY for Gold or CRYPTO_ENABLED=true for crypto."
+            )
 
     logger.info("Bootstrap: data initialization complete")
 
@@ -115,32 +141,33 @@ async def bootstrap_data() -> None:
 @asynccontextmanager
 async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     """Application lifespan: setup on startup, teardown on shutdown."""
-    settings = get_settings()
-
     # Configure structured logging first so all startup logs are formatted
-    setup_logging(settings.log_level, settings.log_json)
+    setup_logging()
 
-    # Bootstrap data (seed strategies, backfill candles, run backtests)
+    logger.info("Starting QuantLive application...")
+
+    # Bootstrap data (seed strategies + backfill candles)
     try:
         await bootstrap_data()
     except Exception:
-        logger.exception("Bootstrap failed -- continuing with scheduler")
+        logger.opt(exception=True).error("Bootstrap failed — continuing anyway")
 
-    # Start background scheduler and register candle refresh jobs
+    # Start background scheduler
+    scheduler = create_scheduler()
+    register_jobs(scheduler)
     scheduler.start()
-    register_jobs()
-    logger.info("GoldSignal application started")
+    logger.info("QuantLive application started — scheduler running")
 
     yield
 
     # Graceful shutdown
     scheduler.shutdown(wait=False)
     await engine.dispose()
-    logger.info("GoldSignal application stopped")
+    logger.info("QuantLive application stopped")
 
 
 app = FastAPI(
-    title="GoldSignal",
+    title="QuantLive",
     version="0.1.0",
     lifespan=lifespan,
 )

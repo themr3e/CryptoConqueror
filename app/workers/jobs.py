@@ -152,7 +152,11 @@ def _get_feedback_controller() -> FeedbackController:
 # ---------------------------------------------------------------------------
 
 async def job_fetch_candles() -> None:
-    """Fetch and store latest candles for all timeframes."""
+    """Fetch and store latest XAUUSD candles (skipped when no Twelve Data key)."""
+    settings = get_settings()
+    if not settings.xauusd_enabled:
+        return
+
     logger.info("[Job] fetch_candles started")
     ingestor = _get_candle_ingestor()
     async with async_sessionmaker() as session:
@@ -173,7 +177,11 @@ async def job_fetch_candles() -> None:
 
 
 async def job_generate_signals() -> None:
-    """Run the full signal generation pipeline."""
+    """Run the XAUUSD signal pipeline (skipped when no Twelve Data key)."""
+    settings = get_settings()
+    if not settings.xauusd_enabled:
+        return
+
     logger.info("[Job] generate_signals started")
     feedback = _get_feedback_controller()
     async with async_sessionmaker() as session:
@@ -191,7 +199,11 @@ async def job_generate_signals() -> None:
 
 
 async def job_detect_outcomes() -> None:
-    """Check active signals against current price and record outcomes."""
+    """Check active XAUUSD signals against current price (skipped when no Twelve Data key)."""
+    settings = get_settings()
+    if not settings.xauusd_enabled:
+        return
+
     logger.info("[Job] detect_outcomes started")
     detector = _get_outcome_detector()
     async with async_sessionmaker() as session:

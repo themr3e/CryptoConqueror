@@ -36,6 +36,24 @@ class Settings(BaseSettings):
     telegram_bot_token: str = ""
     telegram_chat_id: str = ""
 
+    # ── Crypto Futures (Binance) ─────────────────────────────────────────────
+    # Public market data endpoints require no API key.
+    # Keys are only needed for order execution (future feature).
+    binance_futures_api_key: str = ""
+    binance_futures_api_secret: str = ""
+
+    # Comma-separated list of crypto futures symbols to track
+    crypto_symbols: str = "BTCUSDT,ETHUSDT"
+
+    # Master switch — set CRYPTO_ENABLED=true to activate the crypto pipeline.
+    # Defaults to False so existing XAUUSD behaviour is unaffected on deploy.
+    crypto_enabled: bool = False
+
+    @property
+    def crypto_symbol_list(self) -> list[str]:
+        """Return crypto_symbols as a list of stripped uppercase strings."""
+        return [s.strip().upper() for s in self.crypto_symbols.split(",") if s.strip()]
+
     @model_validator(mode="after")
     def normalize_database_url(self) -> "Settings":
         """Ensure DATABASE_URL uses the asyncpg driver.

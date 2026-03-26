@@ -16,9 +16,13 @@ from datetime import datetime, timezone
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from loguru import logger
 
+from app.config import get_settings
 from app.database import async_sessionmaker
 from app.services.backtester import BacktestRunner
 from app.services.candle_ingestor import CandleIngestor
+from app.services.crypto_candle_ingestor import CryptoCandleIngestor
+from app.services.crypto_fee_model import CryptoFeeModel
+from app.services.crypto_outcome_detector import CryptoOutcomeDetector
 from app.services.data_retention import DataRetentionService
 from app.services.failure_tracker import FailureTracker
 from app.services.feedback_controller import FeedbackController
@@ -38,6 +42,8 @@ from app.services.walk_forward import WalkForwardValidator
 _candle_ingestor: CandleIngestor | None = None
 _signal_pipeline: SignalPipeline | None = None
 _outcome_detector: OutcomeDetector | None = None
+_crypto_candle_ingestor: CryptoCandleIngestor | None = None
+_crypto_outcome_detector: CryptoOutcomeDetector | None = None
 _backtest_runner: BacktestRunner | None = None
 _param_optimizer: ParamOptimizer | None = None
 _performance_tracker: PerformanceTracker | None = None
@@ -110,6 +116,28 @@ def _get_data_retention() -> DataRetentionService:
     if _data_retention is None:
         _data_retention = DataRetentionService()
     return _data_retention
+
+
+def _get_crypto_candle_ingestor() -> CryptoCandleIngestor:
+    global _crypto_candle_ingestor
+    if _crypto_candle_ingestor is None:
+        _crypto_candle_ingestor = CryptoCandleIngestor()
+    return _crypto_candle_ingestor
+
+
+def _get_crypto_outcome_detector() -> CryptoOutcomeDetector:
+    global _crypto_outcome_detector
+    if _crypto_outcome_detector is None:
+        notifier = TelegramNotifier()
+        fee_model = CryptoFeeModel()
+        perf_tracker = PerformanceTracker()
+        _crypto_outcome_detector = CryptoOutcomeDetector(
+            crypto_ingestor=_get_crypto_candle_ingestor(),
+            fee_model=fee_model,
+            notifier=notifier,
+            perf_tracker=perf_tracker,
+        )
+    return _crypto_outcome_detector
 
 
 def _get_feedback_controller() -> FeedbackController:
@@ -344,6 +372,72 @@ async def job_send_health_digest() -> None:
 
 
 # ---------------------------------------------------------------------------
+# Crypto jobs (guarded by CRYPTO_ENABLED setting)
+# ---------------------------------------------------------------------------
+
+async def job_fetch_crypto_candles() -> None:
+    """Fetch and store latest candles for all configured crypto symbols."""
+    settings = get_settings()
+    if not settings.crypto_enabled:
+        return
+
+    logger.info("[Job] fetch_crypto_candles started")
+    ingestor = _get_crypto_candle_ingestor()
+    symbols = settings.crypto_symbol_list
+
+    async with async_sessionmaker() as session:
+        for symbol in symbols:
+            for tf in ["M15", "H1", "H4", "D1"]:
+                try:
+                    stored = await ingestor.fetch_and_store(session, symbol, tf)
+                    logger.info("[Job] fetch_crypto_candles: {} {} {} candles stored", stored, symbol, tf)
+                    _failure_tracker.record_success("crypto_candle_fetch")
+                except Exception:
+                    logger.opt(exception=True).error(
+                        "[Job] fetch_crypto_candles failed for {} {}", symbol, tf
+                    )
+                    _failure_tracker.record_failure("crypto_candle_fetch")
+
+
+async def job_generate_crypto_signals() -> None:
+    """Run the signal pipeline for all configured crypto symbols."""
+    settings = get_settings()
+    if not settings.crypto_enabled:
+        return
+
+    logger.info("[Job] generate_crypto_signals started")
+    pipeline = _get_signal_pipeline()
+    symbols = settings.crypto_symbol_list
+
+    async with async_sessionmaker() as session:
+        for symbol in symbols:
+            try:
+                signals = await pipeline.run(session, symbol=symbol)
+                logger.info("[Job] generate_crypto_signals: {} signal(s) for {}", len(signals), symbol)
+            except Exception:
+                logger.opt(exception=True).error("[Job] generate_crypto_signals failed for {}", symbol)
+
+
+async def job_detect_crypto_outcomes() -> None:
+    """Check active crypto signals against Binance mark price and record outcomes."""
+    settings = get_settings()
+    if not settings.crypto_enabled:
+        return
+
+    logger.info("[Job] detect_crypto_outcomes started")
+    detector = _get_crypto_outcome_detector()
+    symbols = settings.crypto_symbol_list
+
+    async with async_sessionmaker() as session:
+        try:
+            outcomes = await detector.check_active_signals(session, crypto_symbols=symbols)
+            if outcomes:
+                logger.info("[Job] detect_crypto_outcomes: {} outcome(s) recorded", len(outcomes))
+        except Exception:
+            logger.opt(exception=True).error("[Job] detect_crypto_outcomes failed")
+
+
+# ---------------------------------------------------------------------------
 # Registration
 # ---------------------------------------------------------------------------
 
@@ -351,14 +445,20 @@ def register_jobs(scheduler: AsyncIOScheduler) -> None:
     """Register all background jobs on the scheduler.
 
     Job schedule:
-        - fetch_candles       : every 15 minutes
-        - generate_signals    : every hour (at :05 past the hour)
-        - detect_outcomes     : every 5 minutes
-        - run_backtests       : daily at 02:00 UTC
-        - optimize_params     : weekly on Sunday at 03:00 UTC
-        - update_performance  : daily at 01:00 UTC
-        - data_retention      : daily at 04:00 UTC
-        - health_digest       : daily at 08:00 UTC
+        XAUUSD (always active):
+        - fetch_candles           : every 15 minutes (Twelve Data)
+        - generate_signals        : every hour at :05
+        - detect_outcomes         : every 5 minutes
+        - run_backtests           : daily at 02:00 UTC
+        - optimize_params         : Sunday at 03:00 UTC
+        - update_performance      : daily at 01:00 UTC
+        - data_retention          : daily at 04:00 UTC
+        - health_digest           : daily at 08:00 UTC
+
+        Crypto (active only when CRYPTO_ENABLED=true):
+        - fetch_crypto_candles    : every 15 minutes (Binance Futures)
+        - generate_crypto_signals : every hour at :06
+        - detect_crypto_outcomes  : every 5 minutes
     """
     scheduler.add_job(
         job_fetch_candles,
@@ -421,6 +521,29 @@ def register_jobs(scheduler: AsyncIOScheduler) -> None:
         minute=0,
         id="health_digest",
         name="Send health digest",
+    )
+
+    # ── Crypto jobs (no-op when CRYPTO_ENABLED=false) ─────────────────────
+    scheduler.add_job(
+        job_fetch_crypto_candles,
+        trigger="interval",
+        minutes=15,
+        id="fetch_crypto_candles",
+        name="Fetch crypto candles (Binance Futures)",
+    )
+    scheduler.add_job(
+        job_generate_crypto_signals,
+        trigger="cron",
+        minute=6,   # 1 min after XAUUSD signals to avoid DB contention
+        id="generate_crypto_signals",
+        name="Generate crypto trading signals",
+    )
+    scheduler.add_job(
+        job_detect_crypto_outcomes,
+        trigger="interval",
+        minutes=5,
+        id="detect_crypto_outcomes",
+        name="Detect crypto signal outcomes",
     )
 
     logger.info("Registered {} background jobs", len(scheduler.get_jobs()))

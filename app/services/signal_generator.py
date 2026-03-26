@@ -40,63 +40,69 @@ class SignalGenerator:
         self,
         session: AsyncSession,
         strategy_name: str,
+        symbol: str = "XAUUSD",
     ) -> list:
-        """Run a strategy's analyze() on latest candle data."""
-        from app.strategies.base import (
-            BaseStrategy,
-            CandidateSignal,
-            InsufficientDataError,
-            candles_to_dataframe,
-        )
-        import app.strategies.liquidity_sweep  # noqa: F401
-        import app.strategies.trend_continuation  # noqa: F401
-        import app.strategies.breakout_expansion  # noqa: F401
-        import app.strategies.ema_momentum  # noqa: F401
+        """Run a strategy's generate_signals() on latest candle data.
+
+        Args:
+            session:       Async DB session.
+            strategy_name: Registered strategy name.
+            symbol:        Market symbol to load candles for (e.g. ``"XAUUSD"``, ``"BTCUSDT"``).
+
+        Returns:
+            List of CandidateSignal instances.
+        """
+        import pandas as pd
+        import app.strategies  # noqa: F401 — triggers all self-registrations
+        from app.strategies.base import BaseStrategy
 
         opt_params = await self._load_optimized_params(session, strategy_name)
-        try:
-            strategy = BaseStrategy.get_strategy(strategy_name, params=opt_params)
-        except KeyError:
+
+        registry = BaseStrategy.get_registry()
+        if strategy_name not in registry:
             logger.error(
                 "Strategy '{}' not found in registry. Available: {}",
                 strategy_name,
-                list(BaseStrategy.get_registry().keys()),
+                list(registry.keys()),
             )
             return []
 
-        primary_tf = strategy.required_timeframes[0]
-        limit = strategy.min_candles + 50
+        strategy_cls = registry[strategy_name]
+        strategy = strategy_cls(params=opt_params)
 
+        # Load H1 candles (primary timeframe for all strategies)
+        limit = 350  # sufficient for all strategy lookbacks + EMA200
         stmt = (
             select(Candle)
-            .where(
-                and_(
-                    Candle.symbol == "XAUUSD",
-                    Candle.timeframe == primary_tf,
-                )
-            )
+            .where(and_(Candle.symbol == symbol, Candle.timeframe == "H1"))
             .order_by(Candle.timestamp.desc())
             .limit(limit)
         )
         result = await session.execute(stmt)
-        candles = result.scalars().all()
+        candles_orm = result.scalars().all()
 
-        if not candles:
-            logger.warning(
-                "No candles found for XAUUSD/{} -- cannot generate signals",
-                primary_tf,
-            )
+        if not candles_orm:
+            logger.warning("No candles found for {}/H1 -- cannot generate signals", symbol)
             return []
 
-        df = candles_to_dataframe(list(candles))
+        # Build DataFrame (oldest first)
+        rows = list(reversed(candles_orm))
+        df = pd.DataFrame([{
+            "timestamp": c.timestamp,
+            "open":   float(c.open),
+            "high":   float(c.high),
+            "low":    float(c.low),
+            "close":  float(c.close),
+            "volume": float(c.volume) if c.volume is not None else 0.0,
+        } for c in rows]).set_index("timestamp")
+        df.attrs["symbol"] = symbol  # let strategies infer the symbol
 
         try:
-            candidates: list[CandidateSignal] = strategy.analyze(df)
-        except InsufficientDataError as exc:
-            logger.warning(
-                "Insufficient data for strategy '{}': {}",
-                strategy_name,
-                exc,
+            from app.strategies.base import CandidateSignal
+            candidates: list[CandidateSignal] = strategy.generate_signals(df)
+        except Exception as exc:
+            logger.opt(exception=True).warning(
+                "Strategy '{}' raised an exception: {}", strategy_name, str(exc)[:200]
             )
             return []
 
@@ -185,6 +191,9 @@ class SignalGenerator:
         """Apply validation filters to candidate signals."""
         validated: list = []
 
+        # Detect XAUUSD symbols for pip-based validation
+        _FOREX_SYMBOLS = {"XAUUSD", "XAGUSD"}
+
         for candidate in candidates:
             rr = float(candidate.risk_reward)
             if rr < MIN_RR:
@@ -195,13 +204,26 @@ class SignalGenerator:
                 continue
 
             sl_dist = abs(float(candidate.entry_price) - float(candidate.stop_loss))
-            sl_pips = sl_dist / PIP_VALUE
-            if sl_pips > MAX_SL_PIPS:
-                logger.info(
-                    "Signal rejected: SL {:.0f} pips exceeds max {:.0f} pips",
-                    sl_pips, MAX_SL_PIPS,
-                )
-                continue
+            entry = float(candidate.entry_price)
+
+            if candidate.symbol in _FOREX_SYMBOLS:
+                # Forex / Gold: pip-based SL check
+                sl_pips = sl_dist / PIP_VALUE
+                if sl_pips > MAX_SL_PIPS:
+                    logger.info(
+                        "Signal rejected: SL {:.0f} pips exceeds max {:.0f} pips",
+                        sl_pips, MAX_SL_PIPS,
+                    )
+                    continue
+            else:
+                # Crypto: percentage-based SL check (max 5% from entry)
+                sl_pct = (sl_dist / entry * 100) if entry > 0 else 0
+                if sl_pct > 5.0:
+                    logger.info(
+                        "Signal rejected (crypto): SL {:.2f}% from entry exceeds 5%",
+                        sl_pct,
+                    )
+                    continue
 
             conf = float(candidate.confidence)
             if conf < MIN_CONFIDENCE:

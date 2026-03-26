@@ -29,9 +29,8 @@ htmlcov/
 *.swo
 *~
 
-# Alembic generated migrations (keep .gitkeep)
-alembic/versions/*.py
-!alembic/versions/.gitkeep
+# Alembic: track all migration files
+# (previously excluded; now tracked so deployment runs the correct migrations)
 
 # OS
 .DS_Store

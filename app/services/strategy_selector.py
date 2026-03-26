@@ -60,14 +60,30 @@ class StrategyScore:
 class StrategySelector:
     """Selects and ranks strategies based on backtest performance metrics."""
 
-    async def select_best(self, session: AsyncSession) -> StrategyScore | None:
+    async def select_best(
+        self,
+        session: AsyncSession,
+        asset_class: str = "forex",
+    ) -> StrategyScore | None:
         """Return the highest-scoring qualifying strategy, or None."""
-        ranked = await self.select_all_ranked(session)
+        ranked = await self.select_all_ranked(session, asset_class=asset_class)
         return ranked[0] if ranked else None
 
-    async def select_all_ranked(self, session: AsyncSession) -> list[StrategyScore]:
-        """Return all qualifying strategies ranked by composite score."""
-        regime = await self._detect_volatility_regime(session)
+    async def select_all_ranked(
+        self,
+        session: AsyncSession,
+        asset_class: str = "forex",
+    ) -> list[StrategyScore]:
+        """Return all qualifying strategies ranked by composite score.
+
+        Args:
+            session:     Async DB session.
+            asset_class: Filter strategies by asset class.
+                         ``"forex"`` for XAUUSD, ``"crypto_futures"`` for BTC/ETH.
+        """
+        # Use a representative symbol for ATR/regime detection per asset class
+        regime_symbol = "XAUUSD" if asset_class == "forex" else "BTCUSDT"
+        regime = await self._detect_volatility_regime(session, symbol=regime_symbol)
 
         stmt = (
             select(Strategy.name, BacktestResult)
@@ -75,6 +91,7 @@ class StrategySelector:
             .where(
                 and_(
                     Strategy.is_active.is_(True),
+                    Strategy.asset_class == asset_class,
                     BacktestResult.is_walk_forward.isnot(True),
                     BacktestResult.window_days == 30,
                 )
@@ -167,15 +184,18 @@ class StrategySelector:
         return scores
 
     async def check_h4_confluence(
-        self, session: AsyncSession, direction: str
+        self,
+        session: AsyncSession,
+        direction: str,
+        symbol: str = "XAUUSD",
     ) -> bool:
-        """Check if H4 EMA-50/200 confirms the signal direction."""
+        """Check if H4 EMA-50/200 confirms the signal direction for the given symbol."""
         try:
             stmt = (
                 select(Candle)
                 .where(
                     and_(
-                        Candle.symbol == "XAUUSD",
+                        Candle.symbol == symbol,
                         Candle.timeframe == "H4",
                     )
                 )
@@ -200,8 +220,12 @@ class StrategySelector:
         except Exception:
             return False
 
-    async def _detect_volatility_regime(self, session: AsyncSession) -> VolatilityRegime:
-        """Detect current volatility regime using ATR percentile."""
+    async def _detect_volatility_regime(
+        self,
+        session: AsyncSession,
+        symbol: str = "XAUUSD",
+    ) -> VolatilityRegime:
+        """Detect current volatility regime using ATR percentile for the given symbol."""
         try:
             from app.strategies.helpers.indicators import compute_atr
             import pandas as pd
@@ -210,7 +234,7 @@ class StrategySelector:
                 select(Candle.high, Candle.low, Candle.close)
                 .where(
                     and_(
-                        Candle.symbol == "XAUUSD",
+                        Candle.symbol == symbol,
                         Candle.timeframe == "H1",
                     )
                 )

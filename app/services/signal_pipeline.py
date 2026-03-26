@@ -40,14 +40,28 @@ class SignalPipeline:
         self.risk_manager = risk_manager
         self.gold_intel = gold_intel
 
-    async def run(self, session: AsyncSession) -> list[Signal]:
-        """Execute the full signal pipeline."""
+    async def run(
+        self,
+        session: AsyncSession,
+        symbol: str = "XAUUSD",
+    ) -> list[Signal]:
+        """Execute the full signal pipeline for the given symbol.
+
+        Args:
+            session: Async DB session.
+            symbol:  Market symbol to generate signals for.
+                     Defaults to ``"XAUUSD"`` (backward-compatible).
+        """
+        # Determine asset class from symbol
+        _CRYPTO_SYMBOLS = {"BTCUSDT", "ETHUSDT", "BNBUSDT", "SOLUSDT"}
+        asset_class = "crypto_futures" if symbol in _CRYPTO_SYMBOLS else "forex"
+
         # 1. Expire stale signals
         expired_count = await self.generator.expire_stale_signals(session)
-        logger.info("Expired {} stale signal(s) before scan", expired_count)
+        logger.info("Expired {} stale signal(s) before scan (symbol={})", expired_count, symbol)
 
-        # 2. Rank all strategies
-        ranked = await self.selector.select_all_ranked(session)
+        # 2. Rank all strategies for this asset class
+        ranked = await self.selector.select_all_ranked(session, asset_class=asset_class)
         if not ranked:
             logger.warning("No qualifying strategy found, skipping signal generation.")
             return []
@@ -70,7 +84,7 @@ class SignalPipeline:
                 strategy_name, score.composite_score, score.is_degraded,
             )
 
-            candidates = await self.generator.generate(session, strategy_name)
+            candidates = await self.generator.generate(session, strategy_name, symbol=symbol)
             if not candidates:
                 continue
 
@@ -82,10 +96,10 @@ class SignalPipeline:
             best_candidate = valid[0]
             validated = [best_candidate]
 
-            # Block opposite-direction signal
+            # Block opposite-direction signal for this symbol only
             active_stmt = (
                 select(Signal.direction)
-                .where(Signal.status == "active")
+                .where(and_(Signal.status == "active", Signal.symbol == symbol))
                 .limit(1)
             )
             active_result = await session.execute(active_stmt)
@@ -101,7 +115,7 @@ class SignalPipeline:
                     continue
 
             # Risk check
-            current_atr, baseline_atr = await self._compute_atr(session)
+            current_atr, baseline_atr = await self._compute_atr(session, symbol=symbol)
             risk_results = await self.risk_manager.check(
                 session, validated,
                 current_atr=current_atr,
@@ -133,7 +147,7 @@ class SignalPipeline:
         # 4. H4 confluence boost
         for i, candidate in enumerate(validated):
             has_confluence = await self.selector.check_h4_confluence(
-                session, candidate.direction.value
+                session, candidate.direction.value, symbol=symbol
             )
             if has_confluence:
                 boosted = min(float(candidate.confidence) + 5, 100.0)
@@ -143,13 +157,10 @@ class SignalPipeline:
                     "reasoning": candidate.reasoning + " | H4 confluence confirmed",
                 })
 
-        # 5. DXY correlation (non-blocking, informational)
+        # 5. DXY correlation + Gold intelligence enrichment (XAUUSD only)
         dxy_info = None
-        if self.gold_intel is not None:
+        if self.gold_intel is not None and symbol == "XAUUSD":
             dxy_info = await self.gold_intel.get_dxy_correlation(session)
-
-        # 6. Gold intelligence enrichment
-        if self.gold_intel is not None:
             enriched = self.gold_intel.enrich(validated, dxy_info)
         else:
             enriched = validated
@@ -194,20 +205,24 @@ class SignalPipeline:
         await session.commit()
 
         logger.info(
-            "Pipeline complete: {} signal(s) generated from '{}' (regime={})",
-            len(persisted), strategy_name, regime.value,
+            "Pipeline complete: {} signal(s) generated from '{}' (symbol={}, regime={})",
+            len(persisted), strategy_name, symbol, regime.value,
         )
         return persisted
 
-    async def _compute_atr(self, session: AsyncSession) -> tuple[float, float]:
-        """Compute current and baseline ATR(14) from H1 candle data."""
+    async def _compute_atr(
+        self,
+        session: AsyncSession,
+        symbol: str = "XAUUSD",
+    ) -> tuple[float, float]:
+        """Compute current and baseline ATR(14) from H1 candle data for the given symbol."""
         import pandas as pd
 
         stmt = (
             select(Candle.high, Candle.low, Candle.close)
             .where(
                 and_(
-                    Candle.symbol == "XAUUSD",
+                    Candle.symbol == symbol,
                     Candle.timeframe == "H1",
                 )
             )

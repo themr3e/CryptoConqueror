@@ -15,13 +15,13 @@ class Signal(Base):
 
     id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
     strategy_id: Mapped[int] = mapped_column(BigInteger, ForeignKey("strategies.id"))
-    symbol: Mapped[str] = mapped_column(String(10))
+    symbol: Mapped[str] = mapped_column(String(20))               # "XAUUSD" | "BTCUSDT" | "ETHUSDT"
     timeframe: Mapped[str] = mapped_column(String(5))
     direction: Mapped[str] = mapped_column(String(5))  # "BUY" or "SELL"
-    entry_price: Mapped[Decimal] = mapped_column(Numeric(10, 2))
-    stop_loss: Mapped[Decimal] = mapped_column(Numeric(10, 2))
-    take_profit_1: Mapped[Decimal] = mapped_column(Numeric(10, 2))
-    take_profit_2: Mapped[Decimal] = mapped_column(Numeric(10, 2))
+    entry_price: Mapped[Decimal] = mapped_column(Numeric(18, 8))
+    stop_loss: Mapped[Decimal] = mapped_column(Numeric(18, 8))
+    take_profit_1: Mapped[Decimal] = mapped_column(Numeric(18, 8))
+    take_profit_2: Mapped[Decimal] = mapped_column(Numeric(18, 8))
     risk_reward: Mapped[Decimal] = mapped_column(Numeric(5, 2))
     confidence: Mapped[Decimal] = mapped_column(Numeric(5, 2))
     reasoning: Mapped[Optional[str]] = mapped_column(Text, nullable=True)

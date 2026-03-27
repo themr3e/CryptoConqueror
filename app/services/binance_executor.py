@@ -480,6 +480,22 @@ class BinanceExecutor:
                 )
             return data
 
+    async def get_open_position_size(self, symbol: str) -> float:
+        """Return the current position size on Binance for a symbol (0 = no position)."""
+        try:
+            data = await self._signed_get(
+                "/fapi/v2/positionRisk",
+                {"symbol": symbol},
+            )
+            if isinstance(data, list):
+                for p in data:
+                    if p.get("symbol") == symbol:
+                        return float(p.get("positionAmt", 0))
+            return 0.0
+        except Exception:
+            logger.opt(exception=True).warning("[BinanceExecutor] get_open_position_size failed for {}", symbol)
+            return 0.0  # safe default: assume no position on error
+
     async def _signed_delete(
         self,
         path: str,

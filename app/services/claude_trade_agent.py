@@ -98,6 +98,31 @@ class ClaudeTradeAgent:
             await session.commit()
             return decision
 
+        # ── Sync DB signals with actual Binance positions ─────────────────────
+        # Stale "active" signals in the DB cause Claude to incorrectly think
+        # a position is open. Cross-check with Binance and close any ghosts.
+        if settings.binance_order_execution_enabled:
+            try:
+                from app.services.binance_executor import BinanceExecutor
+                executor = BinanceExecutor()
+                actual_size = await executor.get_open_position_size(symbol)
+                if actual_size == 0.0:
+                    # No real position — close any stale active signals in DB
+                    stale_result = await session.execute(
+                        select(Signal).where(Signal.symbol == symbol, Signal.status == "active")
+                    )
+                    stale_signals = stale_result.scalars().all()
+                    if stale_signals:
+                        for s in stale_signals:
+                            s.status = "closed"
+                        await session.commit()
+                        logger.info(
+                            "[ClaudeAgent] Synced {} stale active signal(s) → closed for {} (no Binance position)",
+                            len(stale_signals), symbol,
+                        )
+            except Exception:
+                logger.opt(exception=True).warning("[ClaudeAgent] Position sync failed for {} — continuing", symbol)
+
         # ── Build market context ──────────────────────────────────────────────
         context = await self._build_context(session, symbol, daily_pnl)
 

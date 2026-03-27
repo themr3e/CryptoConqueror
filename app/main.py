@@ -41,7 +41,7 @@ async def bootstrap_data() -> None:
                 continue
             asset_class = getattr(cls, "ASSET_CLASS", "crypto_futures")
             import json
-        symbols_json = json.dumps(settings.crypto_symbol_list)
+            symbols_json = json.dumps(settings.crypto_symbol_list)
             session.add(Strategy(
                 name=name,
                 is_active=True,

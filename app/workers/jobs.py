@@ -32,6 +32,7 @@ from app.services.outcome_detector import OutcomeDetector
 from app.services.param_optimizer import ParamOptimizer
 from app.services.performance_tracker import PerformanceTracker
 from app.services.risk_manager import RiskManager
+from app.services.claude_trade_agent import ClaudeTradeAgent
 from app.services.signal_generator import SignalGenerator
 from app.services.signal_pipeline import SignalPipeline
 from app.services.strategy_selector import StrategySelector
@@ -525,6 +526,29 @@ async def job_detect_crypto_outcomes() -> None:
             logger.opt(exception=True).error("[Job] detect_crypto_outcomes failed")
 
 
+async def job_claude_agent() -> None:
+    """Run Claude autonomous trading agent for all crypto symbols."""
+    settings = get_settings()
+    if not settings.claude_agent_enabled:
+        return
+    if not settings.anthropic_api_key:
+        logger.warning("[ClaudeAgent] ANTHROPIC_API_KEY not set — skipping")
+        return
+
+    logger.info("[Job] claude_agent started")
+    agent = ClaudeTradeAgent()
+    async with async_sessionmaker() as session:
+        for symbol in settings.crypto_symbol_list:
+            try:
+                decision = await agent.run(session, symbol)
+                logger.info(
+                    "[Job] claude_agent: {} → {} (confidence: {}%)",
+                    symbol, decision.action, decision.confidence,
+                )
+            except Exception:
+                logger.opt(exception=True).error("[Job] claude_agent failed for {}", symbol)
+
+
 # ---------------------------------------------------------------------------
 # Registration
 # ---------------------------------------------------------------------------
@@ -632,6 +656,15 @@ def register_jobs(scheduler: AsyncIOScheduler) -> None:
         minutes=5,
         id="detect_crypto_outcomes",
         name="Detect crypto signal outcomes",
+    )
+
+    # Claude autonomous agent (every 30 minutes when enabled)
+    scheduler.add_job(
+        job_claude_agent,
+        trigger="interval",
+        minutes=30,
+        id="claude_agent",
+        name="Claude autonomous trading agent",
     )
 
     logger.info("Registered {} background jobs", len(scheduler.get_jobs()))

@@ -375,6 +375,7 @@ async def signal_diagnostic():
 async def trigger_job(job_name: str):
     """Manually trigger a job and return the result or error."""
     from app.workers.jobs import (
+        job_claude_agent,
         job_detect_crypto_outcomes,
         job_detect_outcomes,
         job_fetch_candles,
@@ -397,6 +398,7 @@ async def trigger_job(job_name: str):
         "generate_crypto_signals": job_generate_crypto_signals,
         "check_crypto_outcomes": job_detect_crypto_outcomes,
         "send_health_digest": job_send_health_digest,
+        "claude_agent": job_claude_agent,
     }
 
     if job_name not in job_map:

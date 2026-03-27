@@ -58,6 +58,12 @@ class Settings(BaseSettings):
     # Defaults to False so existing XAUUSD behaviour is unaffected on deploy.
     crypto_enabled: bool = False
 
+    # ── Claude Autonomous Trading Agent ──────────────────────────────────────
+    anthropic_api_key: str = ""
+    claude_agent_enabled: bool = False
+    claude_agent_risk_pct: float = 0.05        # 5% risk per trade
+    claude_agent_daily_loss_limit: float = 0.10  # 10% daily loss limit
+
     @property
     def binance_base_url(self) -> str:
         """Binance Futures REST base URL — testnet or mainnet."""

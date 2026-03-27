@@ -37,3 +37,7 @@ def create_scheduler() -> AsyncIOScheduler:
     )
 
     return scheduler
+
+
+# Module-level singleton — imported by dashboard.py and main.py
+scheduler: AsyncIOScheduler = create_scheduler()

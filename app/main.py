@@ -10,7 +10,7 @@ from sqlalchemy import func, select
 from app.config import get_settings
 from app.database import async_sessionmaker, engine
 from app.utils.logging import setup_logging
-from app.workers.scheduler import create_scheduler
+from app.workers.scheduler import scheduler
 from app.workers.jobs import register_jobs
 from app.api.candles import router as candles_router
 from app.api.chart import router as chart_router
@@ -150,7 +150,6 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     logger.info("Starting QuantLive application...")
 
     # Start scheduler immediately so the server can accept healthcheck requests
-    scheduler = create_scheduler()
     register_jobs(scheduler)
     scheduler.start()
 

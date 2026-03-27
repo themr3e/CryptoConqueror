@@ -526,17 +526,18 @@ async def job_detect_crypto_outcomes() -> None:
             logger.opt(exception=True).error("[Job] detect_crypto_outcomes failed")
 
 
-async def job_claude_agent() -> None:
+async def job_claude_agent() -> list:
     """Run Claude autonomous trading agent for all crypto symbols."""
     settings = get_settings()
     if not settings.claude_agent_enabled:
-        return
+        return [{"info": "CLAUDE_AGENT_ENABLED is false — skipping"}]
     if not settings.anthropic_api_key:
         logger.warning("[ClaudeAgent] ANTHROPIC_API_KEY not set — skipping")
-        return
+        return [{"info": "ANTHROPIC_API_KEY not set — skipping"}]
 
     logger.info("[Job] claude_agent started")
     agent = ClaudeTradeAgent()
+    decisions = []
     async with async_sessionmaker() as session:
         for symbol in settings.crypto_symbol_list:
             try:
@@ -545,8 +546,18 @@ async def job_claude_agent() -> None:
                     "[Job] claude_agent: {} → {} (confidence: {}%)",
                     symbol, decision.action, decision.confidence,
                 )
-            except Exception:
+                decisions.append({
+                    "symbol": symbol,
+                    "action": decision.action,
+                    "confidence": float(decision.confidence or 0),
+                    "reasoning": decision.reasoning,
+                    "executed": decision.executed,
+                    "error": decision.execution_error,
+                })
+            except Exception as exc:
                 logger.opt(exception=True).error("[Job] claude_agent failed for {}", symbol)
+                decisions.append({"symbol": symbol, "error": str(exc)})
+    return decisions
 
 
 # ---------------------------------------------------------------------------

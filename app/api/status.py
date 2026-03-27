@@ -405,8 +405,8 @@ async def trigger_job(job_name: str):
         return {"error": f"Unknown job: {job_name}", "available": list(job_map.keys())}
 
     try:
-        await job_map[job_name]()
-        return {"status": "ok", "job": job_name}
+        result = await job_map[job_name]()
+        return {"status": "ok", "job": job_name, "result": result}
     except Exception as exc:
         tb = traceback.format_exc()
         logger.exception("Manual trigger failed: {}", job_name)

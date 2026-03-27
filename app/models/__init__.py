@@ -10,3 +10,4 @@ from app.models.strategy_performance import StrategyPerformance  # noqa: F401
 from app.models.optimized_params import OptimizedParams  # noqa: F401
 from app.models.crypto_fee_config import CryptoFeeConfig  # noqa: F401
 from app.models.trade_order import TradeOrder  # noqa: F401
+from app.models.claude_decision import ClaudeDecision  # noqa: F401

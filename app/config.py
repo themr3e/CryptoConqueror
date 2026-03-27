@@ -60,9 +60,9 @@ class Settings(BaseSettings):
 
     @property
     def binance_base_url(self) -> str:
-        """Binance Futures REST base URL — testnet or mainnet."""
+        """Binance Futures REST base URL — demo or mainnet."""
         if self.binance_testnet:
-            return "https://testnet.binancefuture.com"
+            return "https://demo-fapi.binance.com"
         return "https://fapi.binance.com"
 
     @property

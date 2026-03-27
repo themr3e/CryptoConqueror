@@ -618,9 +618,9 @@
       document.getElementById('stat-active-signals').textContent = d.system?.active_signals ?? '—';
       const uptime = d.system?.uptime_seconds;
       if (uptime != null) {
-        const h = Math.floor(uptime / 3600);
-        const m = Math.floor((uptime % 3600) / 60);
-        document.getElementById('stat-uptime').textContent = `${h}h ${m}m`;
+        // Store server uptime and local timestamp so we can tick client-side
+        window._uptimeBase = uptime;
+        window._uptimeAt = Date.now();
       }
       const dbOk = d.system?.database === 'connected';
       document.getElementById('stat-db').innerHTML = dbOk
@@ -730,6 +730,18 @@
 
   loadData();
   setInterval(loadData, 60000); // Auto-refresh every 60s
+
+  // Tick uptime every second using local clock
+  setInterval(() => {
+    if (window._uptimeBase == null) return;
+    const elapsed = (Date.now() - window._uptimeAt) / 1000;
+    const total = Math.floor(window._uptimeBase + elapsed);
+    const h = Math.floor(total / 3600);
+    const m = Math.floor((total % 3600) / 60);
+    const s = total % 60;
+    document.getElementById('stat-uptime').textContent =
+      h > 0 ? `${h}h ${m}m` : `${m}m ${s}s`;
+  }, 1000);
 
   // ── Settings ──────────────────────────────────────────────────────────
 

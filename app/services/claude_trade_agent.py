@@ -273,6 +273,7 @@ class ClaudeTradeAgent:
             signal = SignalModel(
                 strategy_id=strategy.id,
                 symbol=symbol,
+                timeframe="H1",
                 direction=direction,
                 entry_price=Decimal(str(entry)),
                 stop_loss=Decimal(str(sl)),
@@ -280,6 +281,7 @@ class ClaudeTradeAgent:
                 take_profit_2=Decimal(str(tp)),
                 risk_reward=Decimal(str(round(rr, 2))),
                 confidence=Decimal(str(decision.confidence or 50)),
+                reasoning=decision.reasoning,
                 status="active",
             )
             session.add(signal)

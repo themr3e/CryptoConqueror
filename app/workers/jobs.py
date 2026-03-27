@@ -389,10 +389,10 @@ async def job_send_health_digest() -> None:
                 .where(Outcome.created_at >= since)
             ) or 0
 
-            await notifier.notify_health_digest(
-                signals_24h=sig_count,
-                outcomes_24h=outcome_count,
-            )
+            await notifier.notify_health_digest(stats={
+                "active_signals": sig_count,
+                "outcomes_today": outcome_count,
+            })
         except Exception:
             logger.opt(exception=True).error("[Job] health_digest failed")
 

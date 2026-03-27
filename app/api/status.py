@@ -371,7 +371,7 @@ async def signal_diagnostic():
     return results
 
 
-@router.post("/trigger/{job_name}")
+@router.api_route("/trigger/{job_name}", methods=["GET", "POST"])
 async def trigger_job(job_name: str):
     """Manually trigger a job and return the result or error."""
     from app.workers.jobs import (

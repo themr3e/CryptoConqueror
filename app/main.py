@@ -3,6 +3,8 @@
 from contextlib import asynccontextmanager
 from collections.abc import AsyncGenerator
 
+import json
+
 from fastapi import FastAPI
 from loguru import logger
 from sqlalchemy import func, select
@@ -40,7 +42,6 @@ async def bootstrap_data() -> None:
             if name in existing_names:
                 continue
             asset_class = getattr(cls, "ASSET_CLASS", "crypto_futures")
-            import json
             symbols_json = json.dumps(settings.crypto_symbol_list)
             session.add(Strategy(
                 name=name,

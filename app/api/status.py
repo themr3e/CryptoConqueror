@@ -375,20 +375,28 @@ async def signal_diagnostic():
 async def trigger_job(job_name: str):
     """Manually trigger a job and return the result or error."""
     from app.workers.jobs import (
-        check_outcomes,
-        refresh_candles,
-        run_daily_backtests,
-        run_signal_scanner,
+        job_detect_crypto_outcomes,
+        job_detect_outcomes,
+        job_fetch_candles,
+        job_fetch_crypto_candles,
+        job_generate_crypto_signals,
+        job_generate_signals,
+        job_run_backtests,
+        job_send_health_digest,
     )
 
     job_map = {
-        "refresh_candles_M15": lambda: refresh_candles("M15"),
-        "refresh_candles_H1": lambda: refresh_candles("H1"),
-        "refresh_candles_H4": lambda: refresh_candles("H4"),
-        "refresh_candles_D1": lambda: refresh_candles("D1"),
-        "run_daily_backtests": run_daily_backtests,
-        "run_signal_scanner": run_signal_scanner,
-        "check_outcomes": check_outcomes,
+        "refresh_candles_M15": job_fetch_candles,
+        "refresh_candles_H1": job_fetch_candles,
+        "refresh_candles_H4": job_fetch_candles,
+        "refresh_candles_D1": job_fetch_candles,
+        "run_daily_backtests": job_run_backtests,
+        "run_signal_scanner": job_generate_signals,
+        "check_outcomes": job_detect_outcomes,
+        "fetch_crypto_candles": job_fetch_crypto_candles,
+        "generate_crypto_signals": job_generate_crypto_signals,
+        "check_crypto_outcomes": job_detect_crypto_outcomes,
+        "send_health_digest": job_send_health_digest,
     }
 
     if job_name not in job_map:

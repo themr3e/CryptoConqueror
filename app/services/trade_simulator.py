@@ -32,7 +32,7 @@ class TradeSimulator:
     """Simulates trade outcomes by walking signals through OHLC price data."""
 
     MAX_BARS_FORWARD = 72  # Maximum bars to hold a trade before expiry
-    PIP_VALUE = 0.10       # XAUUSD: $0.10 per pip
+    PIP_VALUE = 1.0        # Crypto: raw USDT price difference (1 pip = $1)
 
     def simulate_trade(
         self,
@@ -56,7 +56,7 @@ class TradeSimulator:
         entry = float(signal.entry_price)
         sl = float(signal.stop_loss)
         tp1 = float(signal.take_profit_1)
-        tp2 = float(signal.take_profit_2)
+        tp2 = float(signal.take_profit_2) if signal.take_profit_2 is not None else None
         spread_f = float(spread)
 
         # Adjust entry for spread (ask price for buys)
@@ -75,13 +75,13 @@ class TradeSimulator:
             if is_buy:
                 # BUY: SL if low drops to/below SL, TP if high reaches TP
                 sl_hit = low <= sl
-                tp2_hit = high >= tp2
+                tp2_hit = tp2 is not None and high >= tp2
                 tp1_hit = high >= tp1
             else:
                 # SELL: SL if high (+ spread as ask) reaches SL, TP if low drops to TP
                 ask_high = high + spread_f
                 sl_hit = ask_high >= sl
-                tp2_hit = low <= tp2
+                tp2_hit = tp2 is not None and low <= tp2
                 tp1_hit = low <= tp1
 
             # SL takes priority over TP

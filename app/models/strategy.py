@@ -17,7 +17,7 @@ class Strategy(Base):
     name: Mapped[str] = mapped_column(String(50), unique=True)
     description: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
     is_active: Mapped[bool] = mapped_column(Boolean, default=True)
-    asset_class: Mapped[str] = mapped_column(String(20), default="forex")  # "forex" | "crypto_futures"
+    asset_class: Mapped[str] = mapped_column(String(20), default="crypto_futures")  # "crypto_futures"
     symbols: Mapped[Optional[str]] = mapped_column(Text, nullable=True)    # JSON list e.g. '["BTCUSDT","ETHUSDT"]'
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now()

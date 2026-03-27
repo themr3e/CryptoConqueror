@@ -40,7 +40,8 @@ async def bootstrap_data() -> None:
             if name in existing_names:
                 continue
             asset_class = getattr(cls, "ASSET_CLASS", "crypto_futures")
-            symbols_json = f'[{", ".join(repr(s) for s in settings.crypto_symbol_list)}]'
+            import json
+        symbols_json = json.dumps(settings.crypto_symbol_list)
             session.add(Strategy(
                 name=name,
                 is_active=True,

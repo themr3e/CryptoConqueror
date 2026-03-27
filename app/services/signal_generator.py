@@ -108,7 +108,7 @@ class SignalGenerator:
 
         if candidates:
             tf_hours = {"M15": 0.25, "H1": 1, "H4": 4, "D1": 24}
-            interval_hours = tf_hours.get(primary_tf, 1)
+            interval_hours = tf_hours.get("H1", 1)  # candles are always loaded as H1
             staleness_cutoff = datetime.now(timezone.utc) - timedelta(
                 hours=interval_hours * 3
             )

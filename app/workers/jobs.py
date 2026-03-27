@@ -137,12 +137,52 @@ def _get_feedback_controller() -> FeedbackController:
 
 async def job_run_backtests() -> None:
     """Run rolling backtests for all active strategies."""
+    settings = get_settings()
+    if not settings.crypto_enabled:
+        return
+
     logger.info("[Job] run_backtests started")
     runner = _get_backtest_runner()
     async with async_sessionmaker() as session:
         try:
-            count = await runner.run_all_strategies(session)
-            logger.info("[Job] run_backtests: {} result(s) stored", count)
+            import pandas as pd
+            from sqlalchemy import and_, select
+            from app.models.candle import Candle
+
+            symbol = settings.crypto_symbol_list[0] if settings.crypto_symbol_list else "BTCUSDT"
+            stmt = (
+                select(Candle)
+                .where(and_(Candle.symbol == symbol, Candle.timeframe == "H1"))
+                .order_by(Candle.timestamp.asc())
+                .limit(2000)
+            )
+            result = await session.execute(stmt)
+            candles_orm = result.scalars().all()
+
+            if not candles_orm:
+                logger.warning("[Job] run_backtests: no H1 candles for {} — skipping", symbol)
+                return
+
+            df = pd.DataFrame([{
+                "timestamp": c.timestamp,
+                "open":   float(c.open),
+                "high":   float(c.high),
+                "low":    float(c.low),
+                "close":  float(c.close),
+                "volume": float(c.volume) if c.volume is not None else 0.0,
+            } for c in candles_orm]).set_index("timestamp")
+            df.attrs["symbol"] = symbol
+
+            results = runner.run_all_strategies(df)
+            total_trades = sum(
+                len(trades)
+                for strat_results in results.values()
+                for _metrics, trades in strat_results.values()
+            )
+            logger.info(
+                "[Job] run_backtests: {} strategy(ies), {} simulated trade(s)",
+                len(results), total_trades,
+            )
         except Exception:
             logger.opt(exception=True).error("[Job] run_backtests failed")
 

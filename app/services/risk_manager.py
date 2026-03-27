@@ -22,7 +22,6 @@ from app.models.signal import Signal
 RISK_PER_TRADE = 0.01       # 1% of account balance
 MAX_CONCURRENT_SIGNALS = 3
 DAILY_LOSS_LIMIT = 0.02     # 2% account drawdown
-PIP_VALUE = 0.10            # XAUUSD: $0.10 per pip
 ATR_FACTOR_MIN = 0.5
 ATR_FACTOR_MAX = 1.5
 
@@ -69,9 +68,9 @@ class RiskManager:
                 for c in candidates
             ]
 
-        # 2. Daily loss limit check
+        # 2. Daily loss limit check (daily_pnl is in USDT for crypto)
         daily_pnl = await self._check_daily_loss(session)
-        daily_loss_pct = abs(daily_pnl * PIP_VALUE / account_balance) if daily_pnl < 0 else 0.0
+        daily_loss_pct = abs(daily_pnl / account_balance) if daily_pnl < 0 else 0.0
         if daily_loss_pct >= DAILY_LOSS_LIMIT:
             return [
                 (c, RiskCheckResult(
@@ -128,12 +127,12 @@ class RiskManager:
             return False
 
     async def _check_daily_loss(self, session: AsyncSession) -> float:
-        """Sum today's P&L in pips."""
+        """Sum today's P&L in USDT."""
         today_start = datetime.now(timezone.utc).replace(
             hour=0, minute=0, second=0, microsecond=0
         )
         try:
-            stmt = select(func.coalesce(func.sum(Outcome.pnl_pips), 0)).where(
+            stmt = select(func.coalesce(func.sum(Outcome.pnl_usdt), 0)).where(
                 Outcome.created_at >= today_start
             )
             result = await session.execute(stmt)
@@ -191,7 +190,7 @@ class RiskManager:
     async def get_drawdown_metrics(self, session: AsyncSession) -> dict:
         """Compute running and maximum drawdown from historical outcomes."""
         try:
-            stmt = select(Outcome.pnl_pips).order_by(Outcome.created_at.asc())
+            stmt = select(Outcome.pnl_usdt).order_by(Outcome.created_at.asc())
             result = await session.execute(stmt)
             pnl_values = [float(r) for r in result.scalars().all()]
 

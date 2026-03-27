@@ -21,6 +21,25 @@ from app.models.strategy_performance import StrategyPerformance
 class PerformanceTracker:
     """Recalculates rolling performance metrics for strategies."""
 
+    async def update_all(self, session: AsyncSession) -> None:
+        """Recalculate 7d/30d metrics for all active strategies."""
+        from app.models.strategy import Strategy
+        from sqlalchemy import select
+
+        try:
+            result = await session.execute(
+                select(Strategy.id).where(Strategy.is_active.is_(True))
+            )
+            strategy_ids = result.scalars().all()
+            for strategy_id in strategy_ids:
+                await self.recalculate_for_strategy(session, strategy_id)
+            logger.info(
+                "PerformanceTracker: updated metrics for {} active strategy(ies)",
+                len(strategy_ids),
+            )
+        except Exception:
+            logger.opt(exception=True).error("PerformanceTracker.update_all failed")
+
     async def recalculate_for_strategy(
         self, session: AsyncSession, strategy_id: int
     ) -> None:

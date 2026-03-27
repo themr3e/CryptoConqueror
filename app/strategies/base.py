@@ -11,6 +11,7 @@ Exports:
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
+from datetime import datetime
 from decimal import Decimal
 from enum import Enum
 from typing import ClassVar
@@ -45,6 +46,7 @@ class CandidateSignal(BaseModel):
     confidence: Decimal
     reasoning: str
     session: str = "unknown"
+    timestamp: datetime | None = None   # candle timestamp that triggered the signal
 
 
 _STRATEGY_REGISTRY: dict[str, type[BaseStrategy]] = {}

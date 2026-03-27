@@ -59,16 +59,16 @@ class BacktestRunner:
             window = candles.iloc[start_idx:end_idx].reset_index(drop=True)
 
             try:
-                signals = strategy.analyze(window)
+                signals = strategy.generate_signals(window)
             except InsufficientDataError:
                 logger.debug(
                     f"Skipping window at idx {start_idx}: insufficient data "
-                    f"for strategy '{strategy.name}'"
+                    f"for strategy '{strategy.NAME}'"
                 )
                 continue
             except Exception:
                 logger.exception(
-                    f"Error in strategy '{strategy.name}' at window idx {start_idx}"
+                    f"Error in strategy '{strategy.NAME}' at window idx {start_idx}"
                 )
                 continue
 
@@ -98,7 +98,7 @@ class BacktestRunner:
         metrics = self.metrics_calculator.compute(trades)
 
         logger.info(
-            f"Backtest complete: strategy={strategy.name}, "
+            f"Backtest complete: strategy={strategy.NAME}, "
             f"window={window_days}d, "
             f"total_trades={metrics.total_trades}, "
             f"win_rate={metrics.win_rate}, "

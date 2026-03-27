@@ -87,57 +87,6 @@ async def status(
     )
 
 
-@router.post("/debug/backfill/{timeframe}")
-async def debug_backfill(timeframe: str, outputsize: int = 5000):
-    """Force a full historical backfill for a timeframe (ignores existing data)."""
-    try:
-        from app.config import get_settings
-        from app.database import async_session_factory
-        from app.services.candle_ingestor import CandleIngestor
-
-        settings = get_settings()
-        ingestor = CandleIngestor(api_key=settings.twelve_data_api_key)
-
-        async with async_session_factory() as session:
-            candles = await ingestor.fetch_candles("XAUUSD", timeframe, outputsize=outputsize)
-            count = await ingestor.upsert_candles(session, candles)
-            return {"status": "ok", "timeframe": timeframe, "fetched": len(candles), "upserted": count}
-    except Exception as exc:
-        return {"status": "error", "error": f"{type(exc).__name__}: {exc}"}
-
-
-@router.post("/debug/seed-strategies")
-async def debug_seed_strategies():
-    """Seed the strategies table with all registered strategies."""
-    try:
-        from app.database import async_session_factory
-        from app.models.strategy import Strategy
-        from sqlalchemy import select
-
-        from app.strategies.base import BaseStrategy  # noqa: F401
-        import app.strategies.liquidity_sweep  # noqa: F401
-        import app.strategies.trend_continuation  # noqa: F401
-        import app.strategies.breakout_expansion  # noqa: F401
-
-        registry = BaseStrategy.get_registry()
-
-        async with async_session_factory() as session:
-            existing = await session.execute(select(Strategy))
-            existing_names = {s.name for s in existing.scalars().all()}
-
-            created = []
-            for name in registry:
-                if name not in existing_names:
-                    session.add(Strategy(name=name, is_active=True))
-                    created.append(name)
-
-            await session.commit()
-
-            return {"status": "ok", "created": created, "existing": list(existing_names)}
-    except Exception as exc:
-        return {"status": "error", "error": f"{type(exc).__name__}: {exc}"}
-
-
 @router.post("/debug/create-tables")
 async def debug_create_tables():
     """Create all database tables directly (bypasses Alembic)."""
@@ -155,55 +104,19 @@ async def debug_create_tables():
 
 @router.get("/debug/api-test")
 async def debug_api_test():
-    """Test Twelve Data API connectivity."""
-    import httpx
-    from app.config import get_settings
-
-    settings = get_settings()
-    key = settings.twelve_data_api_key
-    key_preview = f"{key[:6]}...{key[-4:]}" if len(key) > 10 else "TOO_SHORT"
-
-    results = {"api_key_preview": key_preview}
-
-    try:
-        async with httpx.AsyncClient(timeout=10.0) as client:
-            resp = await client.get(
-                "https://api.twelvedata.com/price",
-                params={"symbol": "XAU/USD", "apikey": key},
-            )
-            results["price_status"] = resp.status_code
-            results["price_body"] = resp.json()
-    except Exception as exc:
-        results["price_error"] = f"{type(exc).__name__}: {exc}"
-
-    try:
-        async with httpx.AsyncClient(timeout=10.0) as client:
-            resp = await client.get(
-                "https://api.twelvedata.com/time_series",
-                params={
-                    "symbol": "XAU/USD",
-                    "interval": "1h",
-                    "outputsize": "3",
-                    "apikey": key,
-                },
-            )
-            results["candle_status"] = resp.status_code
-            body = resp.json()
-            results["candle_ok"] = body.get("status") == "ok"
-            results["candle_count"] = len(body.get("values", []))
-    except Exception as exc:
-        results["candle_error"] = f"{type(exc).__name__}: {exc}"
+    """Test Binance Futures API connectivity."""
+    results: dict = {}
 
     try:
         from app.database import async_session_factory
-        from app.services.candle_ingestor import CandleIngestor
+        from app.services.crypto_candle_ingestor import CryptoCandleIngestor
 
-        ingestor = CandleIngestor(api_key=key)
+        ingestor = CryptoCandleIngestor()
         async with async_session_factory() as session:
-            count = await ingestor.fetch_and_store(session, "XAUUSD", "H1")
-            results["ingest_h1_count"] = count
+            count = await ingestor.fetch_and_store(session, "BTCUSDT", "H1", limit=5)
+            results["binance_btc_h1_count"] = count
     except Exception as exc:
-        results["ingest_error"] = f"{type(exc).__name__}: {exc}"
+        results["binance_error"] = f"{type(exc).__name__}: {exc}"
 
     return results
 
@@ -377,23 +290,14 @@ async def trigger_job(job_name: str):
     from app.workers.jobs import (
         job_claude_agent,
         job_detect_crypto_outcomes,
-        job_detect_outcomes,
-        job_fetch_candles,
         job_fetch_crypto_candles,
         job_generate_crypto_signals,
-        job_generate_signals,
         job_run_backtests,
         job_send_health_digest,
     )
 
     job_map = {
-        "refresh_candles_M15": job_fetch_candles,
-        "refresh_candles_H1": job_fetch_candles,
-        "refresh_candles_H4": job_fetch_candles,
-        "refresh_candles_D1": job_fetch_candles,
         "run_daily_backtests": job_run_backtests,
-        "run_signal_scanner": job_generate_signals,
-        "check_outcomes": job_detect_outcomes,
         "fetch_crypto_candles": job_fetch_crypto_candles,
         "generate_crypto_signals": job_generate_crypto_signals,
         "check_crypto_outcomes": job_detect_crypto_outcomes,

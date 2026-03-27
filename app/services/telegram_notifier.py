@@ -78,7 +78,7 @@ class TelegramNotifier:
         try:
             direction_emoji = "📈" if signal.direction == "BUY" else "📉"
             text = (
-                f"{direction_emoji} <b>New Signal: {signal.direction} XAUUSD</b>\n\n"
+                f"{direction_emoji} <b>New Signal: {signal.direction} {signal.symbol}</b>\n\n"
                 f"<b>Strategy:</b> {strategy_name}\n"
                 f"<b>Entry:</b> {float(signal.entry_price):.2f}\n"
                 f"<b>Stop Loss:</b> {float(signal.stop_loss):.2f}\n"

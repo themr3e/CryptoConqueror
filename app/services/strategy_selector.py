@@ -30,9 +30,9 @@ SCORE_WEIGHTS = {
     "max_drawdown": 0.15,
 }
 
-REGIME_MODIFIERS = {
-    "breakout_expansion": {"HIGH": -0.10},
-    "trend_continuation": {"LOW": -0.10},
+REGIME_MODIFIERS: dict[str, dict[str, float]] = {
+    "crypto_breakout": {"LOW": -0.10},
+    "crypto_momentum": {"HIGH": +0.05},
 }
 
 
@@ -63,7 +63,7 @@ class StrategySelector:
     async def select_best(
         self,
         session: AsyncSession,
-        asset_class: str = "forex",
+        asset_class: str = "crypto_futures",
     ) -> StrategyScore | None:
         """Return the highest-scoring qualifying strategy, or None."""
         ranked = await self.select_all_ranked(session, asset_class=asset_class)
@@ -72,18 +72,15 @@ class StrategySelector:
     async def select_all_ranked(
         self,
         session: AsyncSession,
-        asset_class: str = "forex",
+        asset_class: str = "crypto_futures",
     ) -> list[StrategyScore]:
         """Return all qualifying strategies ranked by composite score.
 
         Args:
             session:     Async DB session.
-            asset_class: Filter strategies by asset class.
-                         ``"forex"`` for XAUUSD, ``"crypto_futures"`` for BTC/ETH.
+            asset_class: Filter strategies by asset class (``"crypto_futures"``).
         """
-        # Use a representative symbol for ATR/regime detection per asset class
-        regime_symbol = "XAUUSD" if asset_class == "forex" else "BTCUSDT"
-        regime = await self._detect_volatility_regime(session, symbol=regime_symbol)
+        regime = await self._detect_volatility_regime(session, symbol="BTCUSDT")
 
         stmt = (
             select(Strategy.name, BacktestResult)
@@ -187,7 +184,7 @@ class StrategySelector:
         self,
         session: AsyncSession,
         direction: str,
-        symbol: str = "XAUUSD",
+        symbol: str = "BTCUSDT",
     ) -> bool:
         """Check if H4 EMA-50/200 confirms the signal direction for the given symbol."""
         try:
@@ -223,7 +220,7 @@ class StrategySelector:
     async def _detect_volatility_regime(
         self,
         session: AsyncSession,
-        symbol: str = "XAUUSD",
+        symbol: str = "BTCUSDT",
     ) -> VolatilityRegime:
         """Detect current volatility regime using ATR percentile for the given symbol."""
         try:

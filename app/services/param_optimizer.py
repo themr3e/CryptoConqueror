@@ -26,33 +26,19 @@ from app.services.walk_forward import WalkForwardValidator
 from app.strategies.base import BaseStrategy
 
 PARAM_RANGES: dict[str, dict[str, tuple[float, float, float]]] = {
-    "liquidity_sweep": {
-        "SWING_ORDER": (3, 8, 1),
-        "LOOKBACK": (30, 80, 10),
-        "SL_ATR_MULT": (0.2, 1.0, 0.1),
-        "TP1_RR": (1.0, 2.5, 0.25),
-        "CONFIRM_BARS": (2, 6, 1),
-    },
-    "trend_continuation": {
-        "EMA_FAST": (20, 60, 10),
-        "PULLBACK_ATR_MULT": (0.5, 2.0, 0.25),
+    "crypto_momentum": {
+        "EMA_FAST": (8, 21, 1),
+        "EMA_SLOW": (21, 55, 2),
+        "RSI_PERIOD": (10, 20, 1),
         "SL_ATR_MULT": (0.5, 2.0, 0.25),
         "TP1_RR": (1.5, 3.0, 0.25),
-        "LOOKBACK_PULLBACK": (3, 10, 1),
     },
-    "breakout_expansion": {
+    "crypto_breakout": {
+        "LOOKBACK": (10, 30, 2),
         "ATR_COMPRESSION": (0.3, 0.8, 0.05),
-        "MIN_CONSOL_BARS": (4, 20, 2),
         "VOLUME_MULT": (1.0, 2.5, 0.25),
-        "BREAKOUT_BODY_ATR": (1.0, 2.5, 0.25),
-    },
-    "ema_momentum": {
-        "EMA_FAST": (15, 30, 5),
-        "EMA_MID": (40, 60, 10),
-        "BODY_ATR_MULT": (0.4, 1.0, 0.1),
         "SL_ATR_MULT": (0.5, 2.0, 0.25),
-        "TP1_RR": (1.0, 2.5, 0.25),
-        "SWING_LOOKBACK": (10, 30, 5),
+        "TP1_RR": (1.5, 3.0, 0.25),
     },
 }
 

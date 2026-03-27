@@ -35,11 +35,7 @@ def _read_env_file() -> dict[str, str]:
 
 
 def _write_env_value(key: str, value: str) -> None:
-    """Upsert a single key=value line in the .env file.
-
-    If the key already exists (with or without whitespace around =) the line is
-    replaced in-place.  Otherwise the key is appended at the end.
-    """
+    """Upsert a single key=value line in the .env file."""
     if _ENV_PATH.exists():
         content = _ENV_PATH.read_text(encoding="utf-8")
     else:
@@ -84,9 +80,9 @@ class SettingsResponse(BaseModel):
     telegram_bot_token: str             # masked if set
     telegram_chat_id: str
     telegram_bot_token_set: bool
-    # Gold / XAUUSD
-    twelve_data_api_key: str            # masked if set
-    twelve_data_api_key_set: bool
+    # Claude Agent
+    claude_agent_enabled: bool
+    anthropic_api_key_set: bool
 
 
 class SettingsUpdate(BaseModel):
@@ -100,7 +96,8 @@ class SettingsUpdate(BaseModel):
     account_balance: float | None = None
     telegram_bot_token: str | None = None           # empty string = keep current
     telegram_chat_id: str | None = None
-    twelve_data_api_key: str | None = None          # empty string = keep current
+    claude_agent_enabled: bool | None = None
+    anthropic_api_key: str | None = None            # empty string = keep current
 
 
 # ---------------------------------------------------------------------------
@@ -115,7 +112,7 @@ async def get_settings_view():
     raw_binance_key    = env.get("BINANCE_FUTURES_API_KEY", "")
     raw_binance_secret = env.get("BINANCE_FUTURES_API_SECRET", "")
     raw_tg_token       = env.get("TELEGRAM_BOT_TOKEN", "")
-    raw_twelve         = env.get("TWELVE_DATA_API_KEY", "")
+    raw_anthropic      = env.get("ANTHROPIC_API_KEY", "")
 
     return SettingsResponse(
         binance_testnet=env.get("BINANCE_TESTNET", "true").lower() not in ("false", "0", "no"),
@@ -130,8 +127,8 @@ async def get_settings_view():
         telegram_bot_token=_mask(raw_tg_token),
         telegram_chat_id=env.get("TELEGRAM_CHAT_ID", ""),
         telegram_bot_token_set=bool(raw_tg_token),
-        twelve_data_api_key=_mask(raw_twelve),
-        twelve_data_api_key_set=bool(raw_twelve),
+        claude_agent_enabled=env.get("CLAUDE_AGENT_ENABLED", "false").lower() in ("true", "1", "yes"),
+        anthropic_api_key_set=bool(raw_anthropic),
     )
 
 
@@ -152,7 +149,8 @@ async def update_settings(payload: SettingsUpdate):
         "account_balance":          ("ACCOUNT_BALANCE",          str),
         "telegram_bot_token":       ("TELEGRAM_BOT_TOKEN",       str),
         "telegram_chat_id":         ("TELEGRAM_CHAT_ID",         str),
-        "twelve_data_api_key":      ("TWELVE_DATA_API_KEY",      str),
+        "claude_agent_enabled":     ("CLAUDE_AGENT_ENABLED",     lambda v: "true" if v else "false"),
+        "anthropic_api_key":        ("ANTHROPIC_API_KEY",        str),
     }
 
     # Secret fields — skip update when the user leaves them blank
@@ -160,7 +158,7 @@ async def update_settings(payload: SettingsUpdate):
         "binance_futures_api_key",
         "binance_futures_api_secret",
         "telegram_bot_token",
-        "twelve_data_api_key",
+        "anthropic_api_key",
     }
 
     updated: list[str] = []

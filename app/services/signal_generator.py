@@ -40,14 +40,14 @@ class SignalGenerator:
         self,
         session: AsyncSession,
         strategy_name: str,
-        symbol: str = "XAUUSD",
+        symbol: str = "BTCUSDT",
     ) -> list:
         """Run a strategy's generate_signals() on latest candle data.
 
         Args:
             session:       Async DB session.
             strategy_name: Registered strategy name.
-            symbol:        Market symbol to load candles for (e.g. ``"XAUUSD"``, ``"BTCUSDT"``).
+            symbol:        Market symbol to load candles for (e.g. ``"BTCUSDT"``, ``"ETHUSDT"``).
 
         Returns:
             List of CandidateSignal instances.
@@ -191,9 +191,6 @@ class SignalGenerator:
         """Apply validation filters to candidate signals."""
         validated: list = []
 
-        # Detect XAUUSD symbols for pip-based validation
-        _FOREX_SYMBOLS = {"XAUUSD", "XAGUSD"}
-
         for candidate in candidates:
             rr = float(candidate.risk_reward)
             if rr < MIN_RR:
@@ -206,24 +203,14 @@ class SignalGenerator:
             sl_dist = abs(float(candidate.entry_price) - float(candidate.stop_loss))
             entry = float(candidate.entry_price)
 
-            if candidate.symbol in _FOREX_SYMBOLS:
-                # Forex / Gold: pip-based SL check
-                sl_pips = sl_dist / PIP_VALUE
-                if sl_pips > MAX_SL_PIPS:
-                    logger.info(
-                        "Signal rejected: SL {:.0f} pips exceeds max {:.0f} pips",
-                        sl_pips, MAX_SL_PIPS,
-                    )
-                    continue
-            else:
-                # Crypto: percentage-based SL check (max 5% from entry)
-                sl_pct = (sl_dist / entry * 100) if entry > 0 else 0
-                if sl_pct > 5.0:
-                    logger.info(
-                        "Signal rejected (crypto): SL {:.2f}% from entry exceeds 5%",
-                        sl_pct,
-                    )
-                    continue
+            # Percentage-based SL check (max 5% from entry)
+            sl_pct = (sl_dist / entry * 100) if entry > 0 else 0
+            if sl_pct > 5.0:
+                logger.info(
+                    "Signal rejected: SL {:.2f}% from entry exceeds 5%",
+                    sl_pct,
+                )
+                continue
 
             conf = float(candidate.confidence)
             if conf < MIN_CONFIDENCE:

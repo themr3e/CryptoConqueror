@@ -1,7 +1,7 @@
 """Signal pipeline orchestrator: the heartbeat of the trading system.
 
-Wires StrategySelector, SignalGenerator, RiskManager, and GoldIntelligence
-into a sequential flow that runs every hour.
+Wires StrategySelector, SignalGenerator, and RiskManager into a sequential
+flow that runs every hour for crypto futures symbols.
 
 Exports:
     SignalPipeline -- main orchestrator class
@@ -18,7 +18,6 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.models.candle import Candle
 from app.models.signal import Signal
 from app.models.strategy import Strategy as StrategyModel
-from app.services.gold_intelligence import GoldIntelligence
 from app.services.risk_manager import RiskManager
 from app.services.signal_generator import SignalGenerator
 from app.services.strategy_selector import StrategySelector
@@ -33,28 +32,23 @@ class SignalPipeline:
         selector: StrategySelector,
         generator: SignalGenerator,
         risk_manager: RiskManager,
-        gold_intel: GoldIntelligence | None,
     ) -> None:
         self.selector = selector
         self.generator = generator
         self.risk_manager = risk_manager
-        self.gold_intel = gold_intel
 
     async def run(
         self,
         session: AsyncSession,
-        symbol: str = "XAUUSD",
+        symbol: str = "BTCUSDT",
     ) -> list[Signal]:
         """Execute the full signal pipeline for the given symbol.
 
         Args:
             session: Async DB session.
-            symbol:  Market symbol to generate signals for.
-                     Defaults to ``"XAUUSD"`` (backward-compatible).
+            symbol:  Crypto futures symbol to generate signals for.
         """
-        # Determine asset class from symbol
-        _CRYPTO_SYMBOLS = {"BTCUSDT", "ETHUSDT", "BNBUSDT", "SOLUSDT"}
-        asset_class = "crypto_futures" if symbol in _CRYPTO_SYMBOLS else "forex"
+        asset_class = "crypto_futures"
 
         # 1. Expire stale signals
         expired_count = await self.generator.expire_stale_signals(session)
@@ -157,13 +151,7 @@ class SignalPipeline:
                     "reasoning": candidate.reasoning + " | H4 confluence confirmed",
                 })
 
-        # 5. DXY correlation + Gold intelligence enrichment (XAUUSD only)
-        dxy_info = None
-        if self.gold_intel is not None and symbol == "XAUUSD":
-            dxy_info = await self.gold_intel.get_dxy_correlation(session)
-            enriched = self.gold_intel.enrich(validated, dxy_info)
-        else:
-            enriched = validated
+        enriched = validated
 
         # 7. Persist signals
         strat_stmt = select(StrategyModel).where(StrategyModel.name == strategy_name)
@@ -213,7 +201,7 @@ class SignalPipeline:
     async def _compute_atr(
         self,
         session: AsyncSession,
-        symbol: str = "XAUUSD",
+        symbol: str = "BTCUSDT",
     ) -> tuple[float, float]:
         """Compute current and baseline ATR(14) from H1 candle data for the given symbol."""
         import pandas as pd

@@ -52,7 +52,7 @@ class CryptoOutcomeDetector:
         Args:
             session:        Async DB session.
             crypto_symbols: List of symbols to check (e.g. ``["BTCUSDT", "ETHUSDT"]``).
-                            If None, fetches all signals where symbol != 'XAUUSD'.
+                            If None, fetches all active signals.
 
         Returns:
             List of newly created Outcome records.
@@ -60,8 +60,6 @@ class CryptoOutcomeDetector:
         stmt = select(Signal).where(Signal.status == "active")
         if crypto_symbols:
             stmt = stmt.where(Signal.symbol.in_(crypto_symbols))
-        else:
-            stmt = stmt.where(Signal.symbol != "XAUUSD")
 
         result = await session.execute(stmt)
         signals = result.scalars().all()

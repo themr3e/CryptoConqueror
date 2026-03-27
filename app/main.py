@@ -19,28 +19,8 @@ from app.api.health import router as health_router
 from app.api.settings import router as settings_router
 from app.api.status import router as status_router
 
-# ---------------------------------------------------------------------------
-# Strategy → asset_class mapping
-# ---------------------------------------------------------------------------
-_STRATEGY_ASSET_CLASS: dict[str, str] = {
-    "liquidity_sweep":       "forex",
-    "trend_continuation":    "forex",
-    "breakout_expansion":    "forex",
-    "ema_momentum":          "forex",
-    "crypto_momentum":       "crypto_futures",
-    "crypto_breakout":       "crypto_futures",
-}
-
-_CRYPTO_STRATEGY_SYMBOLS = '["BTCUSDT","ETHUSDT"]'
-
-
 async def bootstrap_data() -> None:
-    """Seed strategies and backfill candles on first deploy.
-
-    - XAUUSD strategies + candles: only when TWELVE_DATA_API_KEY is set.
-    - Crypto strategies + candles: only when CRYPTO_ENABLED=true.
-    - At least one must be enabled or bootstrap logs a warning.
-    """
+    """Seed strategies and backfill crypto candles on first deploy."""
     settings = get_settings()
 
     # Import all strategies to populate the registry
@@ -50,7 +30,7 @@ async def bootstrap_data() -> None:
     from app.models.strategy import Strategy
 
     async with async_sessionmaker() as session:
-        # ── Step 1: Seed strategies with correct asset_class ──────────────
+        # ── Step 1: Seed strategies ────────────────────────────────────────
         existing_result = await session.execute(select(Strategy))
         existing_names = {s.name for s in existing_result.scalars().all()}
         registry = BaseStrategy.get_registry()
@@ -59,13 +39,13 @@ async def bootstrap_data() -> None:
         for name, cls in registry.items():
             if name in existing_names:
                 continue
-            asset_class = getattr(cls, "ASSET_CLASS", None) or _STRATEGY_ASSET_CLASS.get(name, "forex")
-            symbols = _CRYPTO_STRATEGY_SYMBOLS if asset_class == "crypto_futures" else None
+            asset_class = getattr(cls, "ASSET_CLASS", "crypto_futures")
+            symbols_json = f'[{", ".join(repr(s) for s in settings.crypto_symbol_list)}]'
             session.add(Strategy(
                 name=name,
                 is_active=True,
                 asset_class=asset_class,
-                symbols=symbols,
+                symbols=symbols_json,
             ))
             created.append(name)
 
@@ -75,33 +55,7 @@ async def bootstrap_data() -> None:
         else:
             logger.info("Bootstrap: all strategies already exist")
 
-        # ── Step 2: Backfill XAUUSD candles (only if Twelve Data key set) ──
-        if settings.xauusd_enabled:
-            from app.services.candle_ingestor import CandleIngestor
-            ingestor = CandleIngestor(api_key=settings.twelve_data_api_key)
-
-            for tf, min_bars in [("H1", 800), ("H4", 100), ("D1", 100)]:
-                count_result = await session.execute(
-                    select(func.count()).select_from(Candle).where(
-                        Candle.symbol == "XAUUSD", Candle.timeframe == tf
-                    )
-                )
-                existing_bars = count_result.scalar() or 0
-                if existing_bars < min_bars:
-                    logger.info("Bootstrap: backfilling XAUUSD {} ({} bars exist, need {})...",
-                                tf, existing_bars, min_bars)
-                    try:
-                        candles = await ingestor.fetch_candles("XAUUSD", tf, outputsize=5000)
-                        stored = await ingestor.upsert_candles(session, candles)
-                        logger.info("Bootstrap: backfilled {} XAUUSD {} candles", stored, tf)
-                    except Exception:
-                        logger.opt(exception=True).warning("Bootstrap: XAUUSD {} backfill failed", tf)
-                else:
-                    logger.info("Bootstrap: XAUUSD {} OK ({} bars)", tf, existing_bars)
-        else:
-            logger.info("Bootstrap: XAUUSD disabled (no TWELVE_DATA_API_KEY) — skipping Gold candles")
-
-        # ── Step 3: Backfill crypto candles (only if CRYPTO_ENABLED=true) ──
+        # ── Step 2: Backfill crypto candles ───────────────────────────────
         if settings.crypto_enabled:
             from app.services.crypto_candle_ingestor import CryptoCandleIngestor
             crypto_ingestor = CryptoCandleIngestor()
@@ -127,14 +81,7 @@ async def bootstrap_data() -> None:
                     else:
                         logger.info("Bootstrap: {} {} OK ({} bars)", symbol, tf, existing_bars)
         else:
-            logger.info("Bootstrap: crypto disabled (CRYPTO_ENABLED=false) — skipping crypto candles")
-
-        # ── Warning if nothing is enabled ─────────────────────────────────
-        if not settings.xauusd_enabled and not settings.crypto_enabled:
-            logger.warning(
-                "Bootstrap: BOTH XAUUSD and crypto are disabled! "
-                "Set TWELVE_DATA_API_KEY for Gold or CRYPTO_ENABLED=true for crypto."
-            )
+            logger.warning("Bootstrap: crypto disabled (CRYPTO_ENABLED=false) — set CRYPTO_ENABLED=true")
 
     logger.info("Bootstrap: data initialization complete")
 

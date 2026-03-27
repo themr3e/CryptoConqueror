@@ -18,11 +18,6 @@ class Settings(BaseSettings):
     # Database
     database_url: str
 
-    # External APIs
-    # Twelve Data is only needed for XAUUSD (Gold) candle data.
-    # Leave blank if you are running crypto-only.
-    twelve_data_api_key: str = ""
-
     # Logging
     log_level: str = "INFO"
     log_json: bool = False
@@ -55,7 +50,6 @@ class Settings(BaseSettings):
     crypto_symbols: str = "BTCUSDT,ETHUSDT"
 
     # Master switch — set CRYPTO_ENABLED=true to activate the crypto pipeline.
-    # Defaults to False so existing XAUUSD behaviour is unaffected on deploy.
     crypto_enabled: bool = False
 
     # ── Claude Autonomous Trading Agent ──────────────────────────────────────
@@ -75,11 +69,6 @@ class Settings(BaseSettings):
     def binance_order_execution_enabled(self) -> bool:
         """True when both API key and secret are configured."""
         return bool(self.binance_futures_api_key.strip() and self.binance_futures_api_secret.strip())
-
-    @property
-    def xauusd_enabled(self) -> bool:
-        """True when a Twelve Data key is configured (XAUUSD pipeline active)."""
-        return bool(self.twelve_data_api_key.strip())
 
     @property
     def crypto_symbol_list(self) -> list[str]:

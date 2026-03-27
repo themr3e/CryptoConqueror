@@ -622,11 +622,11 @@
         const m = Math.floor((uptime % 3600) / 60);
         document.getElementById('stat-uptime').textContent = `${h}h ${m}m`;
       }
-      const dbOk = d.system?.database === 'ok';
+      const dbOk = d.system?.database === 'connected';
       document.getElementById('stat-db').innerHTML = dbOk
         ? '<span class="badge badge-green">OK</span>'
         : '<span class="badge badge-red">ERROR</span>';
-      document.getElementById('stat-last-candle').textContent = relTime(d.system?.last_candle_fetch);
+      document.getElementById('stat-last-candle').textContent = relTime(d.system?.last_candle);
       document.getElementById('stat-last-signal').textContent = relTime(d.system?.last_signal_generated);
 
       // Jobs

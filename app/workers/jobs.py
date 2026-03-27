@@ -182,7 +182,7 @@ async def job_fetch_candles() -> None:
                 _failure_tracker.record_failure("candle_fetch")
                 if _failure_tracker.should_alert("candle_fetch"):
                     _s = get_settings()
-        notifier = TelegramNotifier(bot_token=_s.telegram_bot_token or "", chat_id=_s.telegram_chat_id or "")
+                    notifier = TelegramNotifier(bot_token=_s.telegram_bot_token or "", chat_id=_s.telegram_chat_id or "")
                     await notifier.notify_system_alert(
                         "candle_fetch",
                         f"Candle fetch for {tf} failed {_failure_tracker.get_count('candle_fetch')} times consecutively",

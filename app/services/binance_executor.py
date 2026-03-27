@@ -57,19 +57,75 @@ class ExecutionResult:
 # Lot size / tick size precision helpers
 # ---------------------------------------------------------------------------
 
-# Binance Futures minimum quantity steps (approximate — fetched properly via exchangeInfo)
+# Binance Futures quantity step sizes (lot size) per symbol
 _LOT_SIZE_DEFAULTS: dict[str, Decimal] = {
-    "BTCUSDT":  Decimal("0.001"),
-    "ETHUSDT":  Decimal("0.001"),
-    "BNBUSDT":  Decimal("0.01"),
-    "SOLUSDT":  Decimal("0.1"),
+    "BTCUSDT":    Decimal("0.001"),
+    "ETHUSDT":    Decimal("0.001"),
+    "BNBUSDT":    Decimal("0.01"),
+    "SOLUSDT":    Decimal("0.1"),
+    "XRPUSDT":    Decimal("1"),
+    "ADAUSDT":    Decimal("1"),
+    "DOGEUSDT":   Decimal("1"),
+    "AVAXUSDT":   Decimal("0.1"),
+    "LINKUSDT":   Decimal("0.01"),
+    "DOTUSDT":    Decimal("0.1"),
+    "LTCUSDT":    Decimal("0.01"),
+    "UNIUSDT":    Decimal("0.1"),
+    "ATOMUSDT":   Decimal("0.01"),
+    "NEARUSDT":   Decimal("0.1"),
+    "APTUSDT":    Decimal("0.1"),
+    "ARBUSDT":    Decimal("1"),
+    "OPUSDT":     Decimal("0.1"),
+    "INJUSDT":    Decimal("0.1"),
+    "SUIUSDT":    Decimal("1"),
+    "FILUSDT":    Decimal("0.1"),
+    "AAVEUSDT":   Decimal("0.01"),
+    "MKRUSDT":    Decimal("0.001"),
+    "RUNEUSDT":   Decimal("0.1"),
+    "STXUSDT":    Decimal("1"),
+    "FETUSDT":    Decimal("1"),
+    "RENDERUSDT": Decimal("0.1"),
+    "WLDUSDT":    Decimal("0.1"),
+    "TIAUSDT":    Decimal("0.1"),
+    "SEIUSDT":    Decimal("1"),
+    "JUPUSDT":    Decimal("1"),
+    "PYTHUSDT":   Decimal("1"),
+    "MATICUSDT":  Decimal("1"),
 }
 
 _TICK_SIZE_DEFAULTS: dict[str, Decimal] = {
-    "BTCUSDT":  Decimal("0.10"),
-    "ETHUSDT":  Decimal("0.01"),
-    "BNBUSDT":  Decimal("0.01"),
-    "SOLUSDT":  Decimal("0.001"),
+    "BTCUSDT":    Decimal("0.10"),
+    "ETHUSDT":    Decimal("0.01"),
+    "BNBUSDT":    Decimal("0.01"),
+    "SOLUSDT":    Decimal("0.01"),
+    "XRPUSDT":    Decimal("0.0001"),
+    "ADAUSDT":    Decimal("0.0001"),
+    "DOGEUSDT":   Decimal("0.00001"),
+    "AVAXUSDT":   Decimal("0.001"),
+    "LINKUSDT":   Decimal("0.001"),
+    "DOTUSDT":    Decimal("0.001"),
+    "LTCUSDT":    Decimal("0.01"),
+    "UNIUSDT":    Decimal("0.001"),
+    "ATOMUSDT":   Decimal("0.001"),
+    "NEARUSDT":   Decimal("0.001"),
+    "APTUSDT":    Decimal("0.001"),
+    "ARBUSDT":    Decimal("0.0001"),
+    "OPUSDT":     Decimal("0.001"),
+    "INJUSDT":    Decimal("0.001"),
+    "SUIUSDT":    Decimal("0.0001"),
+    "FILUSDT":    Decimal("0.001"),
+    "AAVEUSDT":   Decimal("0.01"),
+    "MKRUSDT":    Decimal("0.10"),
+    "RUNEUSDT":   Decimal("0.001"),
+    "STXUSDT":    Decimal("0.0001"),
+    "FETUSDT":    Decimal("0.0001"),
+    "RENDERUSDT": Decimal("0.001"),
+    "WLDUSDT":    Decimal("0.001"),
+    "TIAUSDT":    Decimal("0.001"),
+    "SEIUSDT":    Decimal("0.0001"),
+    "JUPUSDT":    Decimal("0.0001"),
+    "PYTHUSDT":   Decimal("0.0001"),
+    "MATICUSDT":  Decimal("0.0001"),
 }
 
 
@@ -416,10 +472,17 @@ class BinanceExecutor:
         if price_risk == 0:
             return Decimal("0")
 
-        # Without leverage: risk_amount / price_risk
-        # With leverage: position = (risk_amount / price_risk) * leverage
+        # Quantity = risk_amount / SL_distance (dollar risk divided by loss per unit)
+        # Leverage reduces margin needed but does NOT change the number of units
+        # needed to risk exactly risk_pct of account balance.
         risk_amount = account_balance * risk_pct
-        quantity = (risk_amount / price_risk) * self._leverage
+        quantity = risk_amount / price_risk
+
+        # Cap notional value to avoid oversized positions on low-price coins
+        max_notional = account_balance * Decimal("0.20")  # max 20% of account per trade
+        notional = quantity * entry
+        if notional > max_notional:
+            quantity = max_notional / entry
 
         return _round_quantity(quantity, signal.symbol)
 

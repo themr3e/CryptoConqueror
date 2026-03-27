@@ -413,7 +413,19 @@ async def trigger_job(job_name: str):
         return {"status": "error", "job": job_name, "error": str(exc), "traceback": tb}
 
 
-@router.get("/debug/claude-agent-status")
+@router.get("/force-close-all")
+async def force_close_all(session: AsyncSession = Depends(get_session)):
+    """Force close all active signals immediately."""
+    from sqlalchemy import update
+    from app.models.signal import Signal
+
+    result = await session.execute(
+        update(Signal).where(Signal.status == "active").values(status="closed")
+    )
+    await session.commit()
+    closed = result.rowcount
+    return {"status": "ok", "closed": closed, "message": f"Force closed {closed} active trade(s)"}
+
 async def claude_agent_status():
     """Show current Claude agent configuration so you can verify env vars are set."""
     from app.config import get_settings

@@ -17,7 +17,7 @@ from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from loguru import logger
 
 from app.config import get_settings
-from app.database import async_sessionmaker
+from app.database import async_session_factory as async_sessionmaker
 from app.services.backtester import BacktestRunner
 from app.services.candle_ingestor import CandleIngestor
 from app.services.binance_executor import BinanceExecutor
@@ -64,7 +64,8 @@ def _get_candle_ingestor() -> CandleIngestor:
 def _get_signal_pipeline() -> SignalPipeline:
     global _signal_pipeline
     if _signal_pipeline is None:
-        notifier = TelegramNotifier()
+        _s = get_settings()
+        notifier = TelegramNotifier(bot_token=_s.telegram_bot_token or "", chat_id=_s.telegram_chat_id or "")
         selector = StrategySelector()
         generator = SignalGenerator(notifier=notifier)
         risk_manager = RiskManager()
@@ -81,7 +82,8 @@ def _get_signal_pipeline() -> SignalPipeline:
 def _get_outcome_detector() -> OutcomeDetector:
     global _outcome_detector
     if _outcome_detector is None:
-        notifier = TelegramNotifier()
+        _s = get_settings()
+        notifier = TelegramNotifier(bot_token=_s.telegram_bot_token or "", chat_id=_s.telegram_chat_id or "")
         perf_tracker = PerformanceTracker()
         _outcome_detector = OutcomeDetector(
             notifier=notifier,
@@ -137,7 +139,8 @@ def _get_crypto_candle_ingestor() -> CryptoCandleIngestor:
 def _get_crypto_outcome_detector() -> CryptoOutcomeDetector:
     global _crypto_outcome_detector
     if _crypto_outcome_detector is None:
-        notifier = TelegramNotifier()
+        _s = get_settings()
+        notifier = TelegramNotifier(bot_token=_s.telegram_bot_token or "", chat_id=_s.telegram_chat_id or "")
         fee_model = CryptoFeeModel()
         perf_tracker = PerformanceTracker()
         _crypto_outcome_detector = CryptoOutcomeDetector(
@@ -178,7 +181,8 @@ async def job_fetch_candles() -> None:
                 logger.opt(exception=True).error("[Job] fetch_candles failed for {}", tf)
                 _failure_tracker.record_failure("candle_fetch")
                 if _failure_tracker.should_alert("candle_fetch"):
-                    notifier = TelegramNotifier()
+                    _s = get_settings()
+        notifier = TelegramNotifier(bot_token=_s.telegram_bot_token or "", chat_id=_s.telegram_chat_id or "")
                     await notifier.notify_system_alert(
                         "candle_fetch",
                         f"Candle fetch for {tf} failed {_failure_tracker.get_count('candle_fetch')} times consecutively",

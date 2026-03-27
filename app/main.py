@@ -8,7 +8,7 @@ from loguru import logger
 from sqlalchemy import func, select
 
 from app.config import get_settings
-from app.database import async_sessionmaker, engine
+from app.database import async_session_factory as async_sessionmaker, engine
 from app.utils.logging import setup_logging
 from app.workers.scheduler import scheduler
 from app.workers.jobs import register_jobs

@@ -411,3 +411,22 @@ async def trigger_job(job_name: str):
         tb = traceback.format_exc()
         logger.exception("Manual trigger failed: {}", job_name)
         return {"status": "error", "job": job_name, "error": str(exc), "traceback": tb}
+
+
+@router.get("/debug/claude-agent-status")
+async def claude_agent_status():
+    """Show current Claude agent configuration so you can verify env vars are set."""
+    from app.config import get_settings
+    s = get_settings()
+    return {
+        "claude_agent_enabled": s.claude_agent_enabled,
+        "anthropic_api_key_set": bool(s.anthropic_api_key.strip()),
+        "anthropic_api_key_preview": f"{s.anthropic_api_key[:8]}..." if s.anthropic_api_key else "NOT SET",
+        "crypto_enabled": s.crypto_enabled,
+        "crypto_symbols": s.crypto_symbol_list,
+        "binance_testnet": s.binance_testnet,
+        "binance_order_execution_enabled": s.binance_order_execution_enabled,
+        "claude_agent_risk_pct": s.claude_agent_risk_pct,
+        "claude_agent_daily_loss_limit": s.claude_agent_daily_loss_limit,
+        "telegram_configured": bool(s.telegram_bot_token and s.telegram_chat_id),
+    }

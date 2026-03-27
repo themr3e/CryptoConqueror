@@ -367,7 +367,8 @@ async def job_data_retention() -> None:
 async def job_send_health_digest() -> None:
     """Send daily health digest via Telegram."""
     logger.info("[Job] health_digest started")
-    notifier = TelegramNotifier()
+    _s = get_settings()
+    notifier = TelegramNotifier(bot_token=_s.telegram_bot_token or "", chat_id=_s.telegram_chat_id or "")
     async with async_sessionmaker() as session:
         try:
             from sqlalchemy import select, func, and_

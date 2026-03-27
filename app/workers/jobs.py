@@ -67,7 +67,7 @@ def _get_signal_pipeline() -> SignalPipeline:
         _s = get_settings()
         notifier = TelegramNotifier(bot_token=_s.telegram_bot_token or "", chat_id=_s.telegram_chat_id or "")
         selector = StrategySelector()
-        generator = SignalGenerator(notifier=notifier)
+        generator = SignalGenerator()
         risk_manager = RiskManager()
         gold_intel = GoldIntelligence()
         _signal_pipeline = SignalPipeline(

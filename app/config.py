@@ -83,11 +83,12 @@ class Settings(BaseSettings):
         Railway and other providers supply postgresql:// but SQLAlchemy async
         requires postgresql+asyncpg://.
         """
-        url = self.database_url
+        url = self.database_url.strip()
         if url.startswith("postgresql://"):
-            self.database_url = url.replace("postgresql://", "postgresql+asyncpg://", 1)
+            url = url.replace("postgresql://", "postgresql+asyncpg://", 1)
         elif url.startswith("postgres://"):
-            self.database_url = url.replace("postgres://", "postgresql+asyncpg://", 1)
+            url = url.replace("postgres://", "postgresql+asyncpg://", 1)
+        self.database_url = url
         return self
 
 

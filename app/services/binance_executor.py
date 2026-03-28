@@ -70,16 +70,16 @@ _LOT_SIZE_DEFAULTS: dict[str, Decimal] = {
     "LINKUSDT":   Decimal("0.01"),
     "DOTUSDT":    Decimal("0.1"),
     "LTCUSDT":    Decimal("0.01"),
-    "UNIUSDT":    Decimal("0.1"),
+    "UNIUSDT":    Decimal("1"),
     "ATOMUSDT":   Decimal("0.01"),
-    "NEARUSDT":   Decimal("0.1"),
+    "NEARUSDT":   Decimal("1"),
     "APTUSDT":    Decimal("0.1"),
     "ARBUSDT":    Decimal("1"),
     "OPUSDT":     Decimal("0.1"),
     "INJUSDT":    Decimal("0.1"),
     "SUIUSDT":    Decimal("1"),
     "FILUSDT":    Decimal("0.1"),
-    "AAVEUSDT":   Decimal("0.01"),
+    "AAVEUSDT":   Decimal("0.1"),
     "MKRUSDT":    Decimal("0.001"),
     "RUNEUSDT":   Decimal("0.1"),
     "STXUSDT":    Decimal("1"),
@@ -478,8 +478,9 @@ class BinanceExecutor:
         risk_amount = account_balance * risk_pct
         quantity = risk_amount / price_risk
 
-        # Cap notional value to avoid oversized positions on low-price coins
-        max_notional = account_balance * Decimal("0.20")  # max 20% of account per trade
+        # Cap notional value to avoid oversized positions
+        # Hard cap: 5% of account OR $500, whichever is smaller
+        max_notional = min(account_balance * Decimal("0.05"), Decimal("500"))
         notional = quantity * entry
         if notional > max_notional:
             quantity = max_notional / entry

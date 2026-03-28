@@ -21,6 +21,13 @@ from app.models.strategy_performance import StrategyPerformance
 class PerformanceTracker:
     """Recalculates rolling performance metrics for strategies."""
 
+    async def record_outcome(
+        self, session: AsyncSession, signal: "Signal", outcome: "Outcome"
+    ) -> None:
+        """Recalculate performance metrics after a new trade outcome."""
+        if signal.strategy_id is not None:
+            await self.recalculate_for_strategy(session, signal.strategy_id)
+
     async def update_all(self, session: AsyncSession) -> None:
         """Recalculate 7d/30d metrics for all active strategies."""
         from app.models.strategy import Strategy

@@ -26,8 +26,9 @@ class Settings(BaseSettings):
     candle_refresh_delay_seconds: int = 60
 
     # Trading
-    # Prop firm account balance in USD (sourced from ACCOUNT_BALANCE env var)
-    account_balance: float = 100000.0
+    # Account balance in USD — set ACCOUNT_BALANCE env var to match your actual
+    # Binance demo/live balance. Binance demo accounts start with 10 000 USDT.
+    account_balance: float = 10000.0
 
     # Telegram (optional -- system works without these configured)
     telegram_bot_token: str = ""

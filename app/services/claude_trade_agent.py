@@ -32,33 +32,33 @@ from app.services.telegram_notifier import TelegramNotifier
 _SYSTEM_PROMPT = """You are an expert Binance Futures trader managing a live trading account.
 Your goal is to generate consistent profit while strictly managing risk.
 
-You will receive:
-- Current market data (OHLCV candles for multiple timeframes)
-- Current open positions
-- Today's P&L
-- Recent trade history
+You will receive market data for MULTIPLE symbols at once.
 
-You must respond with a JSON object ONLY — no explanation text outside the JSON.
+You must respond with a JSON ARRAY ONLY — one object per symbol, no explanation outside the JSON.
 
 Response format:
-{
-  "action": "open_long" | "open_short" | "close" | "hold",
-  "symbol": "BTCUSDT" | "ETHUSDT",
-  "reasoning": "Brief explanation of your decision (2-3 sentences)",
-  "confidence": 0-100,
-  "entry_price": <number or null>,
-  "stop_loss": <number or null>,
-  "take_profit": <number or null>
-}
+[
+  {
+    "symbol": "BTCUSDT",
+    "action": "open_long" | "open_short" | "close" | "hold",
+    "reasoning": "Brief explanation (1-2 sentences)",
+    "confidence": 0-100,
+    "entry_price": <number or null>,
+    "stop_loss": <number or null>,
+    "take_profit": <number or null>
+  },
+  ...
+]
 
 Rules:
+- Return exactly one object per symbol provided — same order as input
 - Use "hold" when conditions are unclear or risky
-- Always set stop_loss and take_profit for open_long/open_short actions
-- stop_loss must be at least 0.5% away from entry
+- Always set stop_loss and take_profit for open_long/open_short
+- stop_loss must be at least 0.5% from entry
 - take_profit must give minimum 1.5:1 risk/reward ratio
-- Consider the trend on H4 and H1 timeframes before entering
-- Avoid opening trades against the dominant trend
-- If daily loss limit is near, prefer "hold"
+- Consider H4 and H1 trends before entering
+- Avoid trading against the dominant trend
+- If daily loss limit is near, prefer "hold" for all symbols
 """
 
 
@@ -172,6 +172,211 @@ class ClaudeTradeAgent:
         await self._notify(decision)
 
         return decision
+
+    async def run_batch(
+        self, session: AsyncSession, symbols: list[str]
+    ) -> list[ClaudeDecision]:
+        """Run one decision cycle for all symbols in a single Claude API call.
+
+        This is far more efficient than calling run() per symbol — 1 API call
+        instead of N, reducing total wall time from minutes to ~10-30 seconds.
+        """
+        settings = self._settings
+        daily_pnl = await self._get_daily_pnl(session)
+        daily_loss_limit = settings.account_balance * settings.claude_agent_daily_loss_limit
+
+        # Position sync for all symbols
+        if settings.binance_order_execution_enabled:
+            from app.services.binance_executor import BinanceExecutor
+            executor = BinanceExecutor()
+            for symbol in symbols:
+                try:
+                    actual_size = await executor.get_open_position_size(symbol)
+                    if actual_size == 0.0:
+                        stale_result = await session.execute(
+                            select(Signal).where(Signal.symbol == symbol, Signal.status == "active")
+                        )
+                        stale_signals = stale_result.scalars().all()
+                        if stale_signals:
+                            for s in stale_signals:
+                                s.status = "closed"
+                            await session.commit()
+                            logger.info(
+                                "[ClaudeAgent] Synced {} stale signal(s) → closed for {} (no position)",
+                                len(stale_signals), symbol,
+                            )
+                except Exception:
+                    logger.opt(exception=True).warning("[ClaudeAgent] Position sync failed for {}", symbol)
+
+        # Daily loss limit check
+        if daily_pnl <= -daily_loss_limit:
+            logger.warning("[ClaudeAgent] Daily loss limit hit — holding all {} symbols", len(symbols))
+            decisions = []
+            for symbol in symbols:
+                d = ClaudeDecision(
+                    symbol=symbol,
+                    action="hold",
+                    reasoning=f"Daily loss limit reached (${abs(daily_pnl):.2f} lost today).",
+                    confidence=100.0,
+                    daily_pnl_at_decision=daily_pnl,
+                    executed=False,
+                )
+                session.add(d)
+                decisions.append(d)
+            await session.commit()
+            return decisions
+
+        # Build combined context for all symbols
+        context = await self._build_batch_context(session, symbols, daily_pnl)
+
+        # Single Claude API call for all symbols
+        raw_decisions = await self._ask_claude_batch(context, symbols)
+
+        decisions = []
+        for raw in raw_decisions:
+            symbol = raw.get("symbol", "UNKNOWN")
+            action = raw.get("action", "hold")
+            reasoning = raw.get("reasoning", "No reasoning provided")
+            confidence = float(raw.get("confidence", 50))
+            entry_price = raw.get("entry_price")
+            stop_loss = raw.get("stop_loss")
+            take_profit = raw.get("take_profit")
+
+            decision = ClaudeDecision(
+                symbol=symbol,
+                action=action,
+                reasoning=reasoning,
+                confidence=confidence,
+                entry_price=Decimal(str(entry_price)) if entry_price else None,
+                stop_loss=Decimal(str(stop_loss)) if stop_loss else None,
+                take_profit=Decimal(str(take_profit)) if take_profit else None,
+                daily_pnl_at_decision=daily_pnl,
+                executed=False,
+            )
+
+            logger.info(
+                "[ClaudeAgent] {} → {} ({}%) — {}",
+                symbol, action, int(confidence), reasoning[:60],
+            )
+
+            if action in ("open_long", "open_short") and entry_price and stop_loss and take_profit:
+                executed, error = await self._execute(session, decision, symbol)
+                decision.executed = executed
+                decision.execution_error = error
+            elif action == "close":
+                executed, error = await self._close_open_positions(session, symbol)
+                decision.executed = executed
+                decision.execution_error = error
+
+            session.add(decision)
+            decisions.append(decision)
+
+        await session.commit()
+
+        # Notify Telegram with a summary instead of 32 separate messages
+        await self._notify_batch_summary(decisions, daily_pnl)
+
+        return decisions
+
+    async def _build_batch_context(
+        self, session: AsyncSession, symbols: list[str], daily_pnl: float
+    ) -> str:
+        """Build combined market context for all symbols."""
+        from app.models.candle import Candle
+
+        lines = [
+            f"Account Balance: ${self._settings.account_balance:,.2f}",
+            f"Today's P&L: ${daily_pnl:+.2f}",
+            f"Environment: {'TESTNET' if self._settings.binance_testnet else 'MAINNET'}",
+            f"Symbols to analyze: {len(symbols)}",
+            "",
+        ]
+
+        for symbol in symbols:
+            lines.append(f"=== {symbol} ===")
+
+            for tf in ["H1", "H4"]:
+                result = await session.execute(
+                    select(Candle)
+                    .where(Candle.symbol == symbol, Candle.timeframe == tf)
+                    .order_by(Candle.timestamp.desc())
+                    .limit(5)
+                )
+                candles = list(reversed(result.scalars().all()))
+                if candles:
+                    lines.append(f"[{tf}] " + " | ".join(
+                        f"{float(c.close):.4f}" for c in candles
+                    ) + f" (latest close)")
+
+            open_result = await session.execute(
+                select(Signal).where(Signal.symbol == symbol, Signal.status == "active")
+            )
+            open_sigs = open_result.scalars().all()
+            if open_sigs:
+                s = open_sigs[0]
+                lines.append(f"OPEN: {s.direction} @ {float(s.entry_price):.4f} SL={float(s.stop_loss):.4f}")
+            else:
+                lines.append("OPEN: none")
+            lines.append("")
+
+        return "\n".join(lines)
+
+    async def _ask_claude_batch(self, context: str, symbols: list[str]) -> list[dict]:
+        """Send batch context to Claude and parse the JSON array response."""
+        try:
+            message = await self._client.messages.create(
+                model="claude-haiku-4-5-20251001",
+                max_tokens=4096,
+                system=_SYSTEM_PROMPT,
+                messages=[{"role": "user", "content": context}],
+            )
+            text = message.content[0].text.strip()
+            if text.startswith("```"):
+                text = text.split("```")[1]
+                if text.startswith("json"):
+                    text = text[4:]
+            result = json.loads(text)
+            if isinstance(result, list):
+                return result
+            # If Claude returned a single object, wrap it
+            return [result]
+        except Exception:
+            logger.opt(exception=True).error("[ClaudeAgent] Batch API call failed — defaulting all to hold")
+            return [
+                {"symbol": s, "action": "hold", "reasoning": "Claude API error", "confidence": 0}
+                for s in symbols
+            ]
+
+    async def _notify_batch_summary(
+        self, decisions: list[ClaudeDecision], daily_pnl: float
+    ) -> None:
+        """Send a single Telegram summary for all batch decisions."""
+        try:
+            env = "TESTNET" if self._settings.binance_testnet else "MAINNET"
+            action_counts: dict[str, int] = {}
+            trades = []
+            for d in decisions:
+                action_counts[d.action] = action_counts.get(d.action, 0) + 1
+                if d.action in ("open_long", "open_short"):
+                    emoji = "📈" if d.action == "open_long" else "📉"
+                    status = "✅" if d.executed else "❌"
+                    trades.append(
+                        f"{emoji} {status} <b>{d.symbol}</b> {d.action.upper()} "
+                        f"@ {float(d.entry_price):.4f} | conf={d.confidence:.0f}%"
+                    )
+
+            lines = [
+                f"🤖 <b>Claude Agent Batch — {env}</b>",
+                f"<b>Daily P&L:</b> ${daily_pnl:+.2f}",
+                f"<b>Summary:</b> " + ", ".join(f"{k}={v}" for k, v in sorted(action_counts.items())),
+            ]
+            if trades:
+                lines.append("")
+                lines.extend(trades)
+
+            await self._notifier._send_message("\n".join(lines))
+        except Exception:
+            logger.opt(exception=True).warning("[ClaudeAgent] Batch Telegram notify failed")
 
     async def _build_context(self, session: AsyncSession, symbol: str, daily_pnl: float) -> str:
         """Build market context string to send to Claude."""
@@ -347,7 +552,7 @@ class ClaudeTradeAgent:
         """Sum P&L from outcomes created today."""
         today = datetime.now(timezone.utc).replace(hour=0, minute=0, second=0, microsecond=0)
         result = await session.execute(
-            select(func.coalesce(func.sum(Outcome.pnl_pips), 0)).where(
+            select(func.coalesce(func.sum(Outcome.pnl_usdt), 0)).where(
                 Outcome.created_at >= today
             )
         )

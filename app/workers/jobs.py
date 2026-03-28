@@ -381,28 +381,28 @@ async def job_claude_agent() -> list:
         logger.warning("[ClaudeAgent] ANTHROPIC_API_KEY not set — skipping")
         return [{"info": "ANTHROPIC_API_KEY not set — skipping"}]
 
-    logger.info("[Job] claude_agent started")
+    logger.info("[Job] claude_agent started (batch mode — 1 API call for {} symbols)", len(settings.crypto_symbol_list))
     agent = ClaudeTradeAgent()
     decisions = []
     async with async_sessionmaker() as session:
-        for symbol in settings.crypto_symbol_list:
-            try:
-                decision = await agent.run(session, symbol)
+        try:
+            batch = await agent.run_batch(session, settings.crypto_symbol_list)
+            for decision in batch:
                 logger.info(
                     "[Job] claude_agent: {} → {} (confidence: {}%)",
-                    symbol, decision.action, decision.confidence,
+                    decision.symbol, decision.action, decision.confidence,
                 )
                 decisions.append({
-                    "symbol": symbol,
+                    "symbol": decision.symbol,
                     "action": decision.action,
                     "confidence": float(decision.confidence or 0),
                     "reasoning": decision.reasoning,
                     "executed": decision.executed,
                     "error": decision.execution_error,
                 })
-            except Exception as exc:
-                logger.opt(exception=True).error("[Job] claude_agent failed for {}", symbol)
-                decisions.append({"symbol": symbol, "error": str(exc)})
+        except Exception as exc:
+            logger.opt(exception=True).error("[Job] claude_agent batch failed")
+            decisions.append({"error": str(exc)})
     return decisions
 
 

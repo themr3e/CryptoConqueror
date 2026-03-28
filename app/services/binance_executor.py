@@ -81,12 +81,12 @@ _LOT_SIZE_DEFAULTS: dict[str, Decimal] = {
     "FILUSDT":    Decimal("0.1"),
     "AAVEUSDT":   Decimal("0.1"),
     "MKRUSDT":    Decimal("0.001"),
-    "RUNEUSDT":   Decimal("0.1"),
+    "RUNEUSDT":   Decimal("1"),
     "STXUSDT":    Decimal("1"),
     "FETUSDT":    Decimal("1"),
     "RENDERUSDT": Decimal("0.1"),
-    "WLDUSDT":    Decimal("0.1"),
-    "TIAUSDT":    Decimal("0.1"),
+    "WLDUSDT":    Decimal("1"),
+    "TIAUSDT":    Decimal("1"),
     "SEIUSDT":    Decimal("1"),
     "JUPUSDT":    Decimal("1"),
     "PYTHUSDT":   Decimal("1"),
@@ -327,18 +327,22 @@ class BinanceExecutor:
         signal: Signal,
         quantity: Decimal,
     ) -> OrderResult:
-        """Place the STOP_MARKET stop-loss order (reduceOnly)."""
-        # Opposite side closes the position
+        """Place the STOP_MARKET stop-loss order.
+
+        Uses closePosition=true so the entire position is closed when
+        the stop price is hit. This form is required on Binance Futures
+        Demo (demo-fapi.binance.com) — using quantity+reduceOnly triggers
+        error -4120 on that environment.
+        """
         side = "SELL" if signal.direction == "BUY" else "BUY"
         stop_price = _round_price(signal.stop_loss, signal.symbol)
 
         params = {
-            "symbol":      signal.symbol,
-            "side":        side,
-            "type":        "STOP_MARKET",
-            "quantity":    str(_round_quantity(quantity, signal.symbol)),
-            "stopPrice":   str(stop_price),
-            "reduceOnly":  "true",
+            "symbol":        signal.symbol,
+            "side":          side,
+            "type":          "STOP_MARKET",
+            "stopPrice":     str(stop_price),
+            "closePosition": "true",
         }
 
         return await self._place_and_record(
@@ -351,17 +355,20 @@ class BinanceExecutor:
         signal: Signal,
         quantity: Decimal,
     ) -> OrderResult:
-        """Place the TAKE_PROFIT_MARKET take-profit-1 order (reduceOnly)."""
+        """Place the TAKE_PROFIT_MARKET take-profit-1 order.
+
+        Uses closePosition=true for the same reason as _place_stop_loss —
+        required on Binance Futures Demo to avoid -4120.
+        """
         side = "SELL" if signal.direction == "BUY" else "BUY"
         tp_price = _round_price(signal.take_profit_1, signal.symbol)
 
         params = {
-            "symbol":      signal.symbol,
-            "side":        side,
-            "type":        "TAKE_PROFIT_MARKET",
-            "quantity":    str(_round_quantity(quantity, signal.symbol)),
-            "stopPrice":   str(tp_price),
-            "reduceOnly":  "true",
+            "symbol":        signal.symbol,
+            "side":          side,
+            "type":          "TAKE_PROFIT_MARKET",
+            "stopPrice":     str(tp_price),
+            "closePosition": "true",
         }
 
         return await self._place_and_record(

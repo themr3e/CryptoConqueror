@@ -368,6 +368,7 @@
             <thead>
               <tr>
                 <th>Direction</th>
+                <th>Symbol</th>
                 <th>Entry</th>
                 <th>SL</th>
                 <th>TP1</th>
@@ -615,10 +616,9 @@
       document.getElementById('cb-banner').classList.toggle('hidden', !cb);
 
       // Stats
-      document.getElementById('stat-active-signals').textContent = d.system?.active_signals ?? '—';
+      document.getElementById('stat-active-signals').textContent = d.signals?.active ?? '—';
       const uptime = d.system?.uptime_seconds;
       if (uptime != null) {
-        // Store server uptime and local timestamp so we can tick client-side
         window._uptimeBase = uptime;
         window._uptimeAt = Date.now();
       }
@@ -644,28 +644,30 @@
 
       // Active signals
       const sigBody = document.getElementById('signals-body');
-      if (d.signals && d.signals.length) {
-        sigBody.innerHTML = d.signals.map(s => `
+      const activeSignals = (d.signals?.recent || []).filter(s => s.status === 'active');
+      if (activeSignals.length) {
+        sigBody.innerHTML = activeSignals.map(s => `
           <tr>
             <td>${dirBadge(s.direction)}</td>
-            <td>${fmt(s.entry_price)}</td>
-            <td>${fmt(s.stop_loss)}</td>
-            <td>${fmt(s.take_profit_1)}</td>
+            <td><span class="badge badge-blue">${s.symbol || ''}</span></td>
+            <td>${fmt(s.entry)}</td>
+            <td>${fmt(s.sl)}</td>
+            <td>${fmt(s.tp1)}</td>
             <td>${fmt(s.confidence)}%</td>
             <td><span class="badge badge-gray">${s.strategy || '—'}</span></td>
-            <td class="timestamp">${relTime(s.created_at)}</td>
+            <td class="timestamp">${relTime(s.created)}</td>
           </tr>
         `).join('');
       } else {
-        sigBody.innerHTML = '<tr><td colspan="7" style="color:#8b949e;">No active signals</td></tr>';
+        sigBody.innerHTML = '<tr><td colspan="8" style="color:#8b949e;">No active signals</td></tr>';
       }
 
       // Performance
       const perfBody = document.getElementById('perf-body');
-      if (d.performance && d.performance.length) {
-        perfBody.innerHTML = d.performance.map(p => `
+      if (d.strategies && d.strategies.length) {
+        perfBody.innerHTML = d.strategies.map(p => `
           <tr>
-            <td>${p.strategy}</td>
+            <td>${p.name}</td>
             <td>${pct(p.win_rate)}</td>
             <td>${fmt(p.profit_factor)}</td>
             <td>${p.total_signals ?? '—'}</td>
@@ -680,8 +682,9 @@
 
       // Backtests
       const btBody = document.getElementById('bt-body');
-      if (d.backtests && d.backtests.length) {
-        btBody.innerHTML = d.backtests.map(b => `
+      const btResults = d.backtests?.results || [];
+      if (btResults.length) {
+        btBody.innerHTML = btResults.map(b => `
           <tr>
             <td>${b.strategy}</td>
             <td>${pct(b.win_rate)}</td>
@@ -693,7 +696,7 @@
             <td>${b.is_walk_forward
               ? '<span class="badge badge-blue">WF</span>'
               : '<span class="badge badge-gray">Full</span>'}</td>
-            <td class="timestamp">${relTime(b.created_at)}</td>
+            <td class="timestamp">${relTime(b.created)}</td>
           </tr>
         `).join('');
       } else {
@@ -702,18 +705,19 @@
 
       // Optimized params
       const optBody = document.getElementById('opt-body');
-      if (d.optimized_params && d.optimized_params.length) {
-        optBody.innerHTML = d.optimized_params.map(o => `
+      const optParams = d.backtests?.optimized_params || [];
+      if (optParams.length) {
+        optBody.innerHTML = optParams.map(o => `
           <tr>
-            <td>${o.strategy_name}</td>
-            <td style="font-family: monospace; font-size:11px;">${JSON.stringify(o.params)}</td>
+            <td>${o.strategy}</td>
+            <td style="font-family: monospace; font-size:11px;">—</td>
             <td>${pct(o.win_rate)}</td>
             <td>${fmt(o.profit_factor)}</td>
             <td>${o.total_trades}</td>
             <td>${o.is_overfitted
               ? '<span class="badge badge-yellow">Yes</span>'
               : '<span class="badge badge-green">No</span>'}</td>
-            <td class="timestamp">${relTime(o.created_at)}</td>
+            <td class="timestamp">${relTime(o.created)}</td>
           </tr>
         `).join('');
       } else {

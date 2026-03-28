@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>XAUUSD Chart — QuantLive</title>
+  <title>Chart — QuantLive</title>
   <style>
     * { box-sizing: border-box; margin: 0; padding: 0; }
     body {
@@ -20,6 +20,7 @@
       background: #161b22;
       border-bottom: 1px solid #30363d;
     }
+    .header-left { display: flex; align-items: center; gap: 12px; }
     header h1 { font-size: 18px; color: #58a6ff; }
     header a {
       color: #58a6ff;
@@ -27,6 +28,16 @@
       font-size: 13px;
     }
     header a:hover { text-decoration: underline; }
+    select {
+      background: #21262d;
+      color: #c9d1d9;
+      border: 1px solid #30363d;
+      border-radius: 6px;
+      padding: 4px 8px;
+      font-size: 13px;
+      cursor: pointer;
+    }
+    select:focus { outline: 1px solid #58a6ff; border-color: #58a6ff; }
     #chart-container {
       width: 100%;
       height: calc(100vh - 52px);
@@ -57,7 +68,16 @@
 </head>
 <body>
   <header>
-    <h1>XAUUSD · H1 · QuantLive</h1>
+    <div class="header-left">
+      <h1 id="chart-title">BTCUSDT · H1 · QuantLive</h1>
+      <select id="symbol-select"></select>
+      <select id="tf-select">
+        <option value="M15">M15</option>
+        <option value="H1" selected>H1</option>
+        <option value="H4">H4</option>
+        <option value="D1">D1</option>
+      </select>
+    </div>
     <a href="/dashboard/">← Dashboard</a>
   </header>
 
@@ -74,51 +94,67 @@
 
   <script src="https://unpkg.com/lightweight-charts@4.1.3/dist/lightweight-charts.standalone.production.js"></script>
   <script>
-    (async () => {
-      const container = document.getElementById('chart');
+    // Symbols passed from server
+    const symbols = {{ symbols | tojson }};
+    let currentSymbol = symbols[0] || 'BTCUSDT';
+    let currentTf = 'H1';
 
-      const chart = LightweightCharts.createChart(container, {
-        layout: {
-          background: { color: '#0d1117' },
-          textColor: '#c9d1d9',
-        },
-        grid: {
-          vertLines: { color: '#21262d' },
-          horzLines: { color: '#21262d' },
-        },
-        crosshair: { mode: LightweightCharts.CrosshairMode.Normal },
-        rightPriceScale: { borderColor: '#30363d' },
-        timeScale: {
-          borderColor: '#30363d',
-          timeVisible: true,
-          secondsVisible: false,
-        },
-        width: container.clientWidth,
-        height: container.clientHeight,
-      });
+    // Populate symbol dropdown
+    const symSelect = document.getElementById('symbol-select');
+    symbols.forEach(s => {
+      const opt = document.createElement('option');
+      opt.value = s;
+      opt.textContent = s;
+      symSelect.appendChild(opt);
+    });
+    symSelect.value = currentSymbol;
 
-      // Candlestick series
-      const candleSeries = chart.addCandlestickSeries({
-        upColor: '#3fb950',
-        downColor: '#f85149',
-        borderUpColor: '#3fb950',
-        borderDownColor: '#f85149',
-        wickUpColor: '#3fb950',
-        wickDownColor: '#f85149',
-      });
+    const container = document.getElementById('chart');
+    const chart = LightweightCharts.createChart(container, {
+      layout: {
+        background: { color: '#0d1117' },
+        textColor: '#c9d1d9',
+      },
+      grid: {
+        vertLines: { color: '#21262d' },
+        horzLines: { color: '#21262d' },
+      },
+      crosshair: { mode: LightweightCharts.CrosshairMode.Normal },
+      rightPriceScale: { borderColor: '#30363d' },
+      timeScale: {
+        borderColor: '#30363d',
+        timeVisible: true,
+        secondsVisible: false,
+      },
+      width: container.clientWidth,
+      height: container.clientHeight,
+    });
 
-      // Fetch candles
+    const candleSeries = chart.addCandlestickSeries({
+      upColor: '#3fb950',
+      downColor: '#f85149',
+      borderUpColor: '#3fb950',
+      borderDownColor: '#f85149',
+      wickUpColor: '#3fb950',
+      wickDownColor: '#f85149',
+    });
+
+    async function loadChart(symbol, tf) {
+      currentSymbol = symbol;
+      currentTf = tf;
+      document.getElementById('chart-title').textContent = `${symbol} · ${tf} · QuantLive`;
+
       try {
-        const resp = await fetch('/chart/candles');
+        const resp = await fetch(`/chart/candles?symbol=${symbol}&timeframe=${tf}`);
         const candles = await resp.json();
         candleSeries.setData(candles);
       } catch (e) {
         console.error('Failed to load candles', e);
+        candleSeries.setData([]);
       }
 
-      // Fetch signals and overlay markers
       try {
-        const resp = await fetch('/chart/signals');
+        const resp = await fetch(`/chart/signals?symbol=${symbol}`);
         const signals = await resp.json();
 
         const markers = signals.map(s => {
@@ -140,24 +176,29 @@
           };
         });
 
-        if (markers.length > 0) {
-          candleSeries.setMarkers(markers);
-        }
+        candleSeries.setMarkers(markers.length > 0 ? markers : []);
       } catch (e) {
         console.error('Failed to load signals', e);
       }
+    }
 
-      // Responsive resize
-      const ro = new ResizeObserver(entries => {
-        for (const entry of entries) {
-          chart.applyOptions({
-            width: entry.contentRect.width,
-            height: entry.contentRect.height,
-          });
-        }
-      });
-      ro.observe(container);
-    })();
+    // Initial load
+    loadChart(currentSymbol, currentTf);
+
+    // Dropdown handlers
+    symSelect.addEventListener('change', () => loadChart(symSelect.value, currentTf));
+    document.getElementById('tf-select').addEventListener('change', (e) => loadChart(currentSymbol, e.target.value));
+
+    // Responsive resize
+    const ro = new ResizeObserver(entries => {
+      for (const entry of entries) {
+        chart.applyOptions({
+          width: entry.contentRect.width,
+          height: entry.contentRect.height,
+        });
+      }
+    });
+    ro.observe(container);
   </script>
 </body>
 </html>

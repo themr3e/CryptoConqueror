@@ -1,18 +1,19 @@
 """Chart visualization API endpoints.
 
-Provides REST endpoints for rendering a browser-based XAUUSD candlestick
+Provides REST endpoints for rendering a browser-based crypto candlestick
 chart with signal overlays, and JSON data endpoints for candles and signals.
 """
 
 import datetime
 from pathlib import Path
 
-from fastapi import APIRouter, Depends, Request
+from fastapi import APIRouter, Depends, Query, Request
 from fastapi.responses import HTMLResponse
 from fastapi.templating import Jinja2Templates
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.config import get_settings
 from app.database import get_session
 from app.models.candle import Candle
 from app.models.outcome import Outcome
@@ -46,15 +47,22 @@ def _outcome_color(result: str | None, status: str) -> str:
 @router.get("/", response_class=HTMLResponse)
 async def chart_page(request: Request):
     """Serve the chart HTML page."""
-    return templates.TemplateResponse(request=request, name="chart.html")
+    settings = get_settings()
+    return templates.TemplateResponse(
+        request=request,
+        name="chart.html",
+        context={"symbols": settings.crypto_symbol_list},
+    )
 
 
 @router.get("/candles")
 async def get_chart_candles(
+    symbol: str = Query(default="BTCUSDT"),
+    timeframe: str = Query(default="H1"),
     limit: int = 500,
     session: AsyncSession = Depends(get_session),
 ):
-    """Return H1 XAUUSD candle data as JSON with Unix timestamp seconds.
+    """Return candle data as JSON with Unix timestamp seconds.
 
     Candles are returned in chronological order (oldest first) as required
     by TradingView Lightweight Charts.
@@ -62,15 +70,13 @@ async def get_chart_candles(
     try:
         query = (
             select(Candle)
-            .where(Candle.symbol == "XAUUSD")
-            .where(Candle.timeframe == "H1")
+            .where(Candle.symbol == symbol)
+            .where(Candle.timeframe == timeframe)
             .order_by(Candle.timestamp.desc())
             .limit(limit)
         )
         result = await session.execute(query)
         candles = result.scalars().all()
-
-        # Reverse to chronological order (oldest first)
         candles.reverse()
 
         return [
@@ -89,18 +95,16 @@ async def get_chart_candles(
 
 @router.get("/signals")
 async def get_chart_signals(
+    symbol: str = Query(default="BTCUSDT"),
     limit: int = 100,
     session: AsyncSession = Depends(get_session),
 ):
-    """Return signal data with outcome colors for chart markers.
-
-    Each signal includes entry/SL/TP prices, direction, outcome color,
-    and timing information for marker placement.
-    """
+    """Return signal data with outcome colors for chart markers."""
     try:
         query = (
             select(Signal, Outcome)
             .outerjoin(Outcome, Signal.id == Outcome.signal_id)
+            .where(Signal.symbol == symbol)
             .order_by(Signal.created_at.desc())
             .limit(limit)
         )

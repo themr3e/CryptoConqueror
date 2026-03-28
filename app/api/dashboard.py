@@ -102,19 +102,32 @@ async def dashboard_data(
         for signal, outcome, strategy_name in result.all():
             recent_signals.append({
                 "id": signal.id,
+                "symbol": signal.symbol,
                 "direction": signal.direction,
                 "entry": float(signal.entry_price),
                 "sl": float(signal.stop_loss),
                 "tp1": float(signal.take_profit_1),
-                "tp2": float(signal.take_profit_2),
+                "tp2": float(signal.take_profit_2) if signal.take_profit_2 else None,
                 "rr": float(signal.risk_reward),
                 "confidence": float(signal.confidence),
                 "status": signal.status,
                 "strategy": strategy_name or "Unknown",
                 "created": signal.created_at.isoformat() if signal.created_at else None,
                 "result": outcome.result if outcome else None,
-                "pnl": float(outcome.pnl_pips) if outcome else None,
+                "pnl": float(outcome.pnl_usdt) if outcome and outcome.pnl_usdt else (
+                    float(outcome.pnl_pips) if outcome else None
+                ),
             })
+    except Exception:
+        pass
+
+    # --- Last signal time ---
+    last_signal_generated = None
+    try:
+        result = await session.execute(select(func.max(Signal.created_at)))
+        ts = result.scalar_one()
+        if ts:
+            last_signal_generated = ts.isoformat()
     except Exception:
         pass
 
@@ -127,7 +140,7 @@ async def dashboard_data(
             select(
                 func.count().filter(Outcome.result.in_(["tp1_hit", "tp2_hit"])).label("wins"),
                 func.count().filter(Outcome.result == "sl_hit").label("losses"),
-                func.coalesce(func.sum(Outcome.pnl_pips), 0).label("total_pnl"),
+                func.coalesce(func.sum(Outcome.pnl_usdt), 0).label("total_pnl"),
             ).select_from(Outcome)
         )
         row = result.one()
@@ -311,6 +324,7 @@ async def dashboard_data(
             "scheduler": scheduler_status,
             "uptime_seconds": round(uptime, 1),
             "last_candle": last_candle,
+            "last_signal_generated": last_signal_generated,
             "timestamp": now.isoformat(),
         },
         "jobs": jobs,

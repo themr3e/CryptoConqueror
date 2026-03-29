@@ -450,13 +450,30 @@ class BinanceExecutor:
             )
 
     async def _cancel_order(self, symbol: str, order_id: str) -> bool:
-        """Cancel a single order by ID."""
+        """Cancel a single order by ID.
+
+        -2011 (Unknown order) means the order no longer exists on the exchange
+        — it was already filled or cancelled externally.  We treat that as a
+        successful cancellation so the DB record gets updated to CANCELED.
+        """
         try:
             await self._signed_delete("/fapi/v1/order", {
                 "symbol":  symbol,
                 "orderId": order_id,
             })
             return True
+        except BinanceAPIError as exc:
+            if exc.code == -2011:
+                logger.debug(
+                    "BinanceExecutor: order {} not found on exchange (already gone) — "
+                    "treating as cancelled",
+                    order_id,
+                )
+                return True
+            logger.opt(exception=True).warning(
+                "BinanceExecutor: failed to cancel order {}", order_id
+            )
+            return False
         except Exception:
             logger.opt(exception=True).warning(
                 "BinanceExecutor: failed to cancel order {}", order_id
@@ -528,7 +545,8 @@ class BinanceExecutor:
             data = resp.json()
             if resp.status_code != 200:
                 raise BinanceAPIError(
-                    f"HTTP {resp.status_code} — code={data.get('code')} msg={data.get('msg')}"
+                    f"HTTP {resp.status_code} — code={data.get('code')} msg={data.get('msg')}",
+                    code=data.get("code"),
                 )
             return data
 
@@ -547,7 +565,8 @@ class BinanceExecutor:
             data = resp.json()
             if resp.status_code != 200:
                 raise BinanceAPIError(
-                    f"HTTP {resp.status_code} — code={data.get('code')} msg={data.get('msg')}"
+                    f"HTTP {resp.status_code} — code={data.get('code')} msg={data.get('msg')}",
+                    code=data.get("code"),
                 )
             return data
 
@@ -634,7 +653,24 @@ class BinanceExecutor:
         result = await session.execute(stmt)
         existing_orders = result.scalars().all()
 
-        # ── 2. Cancel existing SL orders ──────────────────────────────────────
+        # ── 2. If no live SL order exists, update DB only ─────────────────────
+        # Positions that never had SL/TP orders placed (e.g. from failed
+        # execution batches) have no Binance order to cancel/replace.  Placing
+        # a brand-new STOP_MARKET on the demo environment without a prior order
+        # triggers -4120.  The safer approach: update signal.stop_loss in the
+        # DB so the outcome detector's price-level check uses the tighter stop,
+        # and let close_position() handle the actual closure when the price is hit.
+        if not existing_orders:
+            signal.stop_loss = new_stop_price
+            await session.commit()
+            logger.info(
+                "BinanceExecutor: SL updated in DB only (no live Binance order) "
+                "{} {} → {}",
+                signal.symbol, original_sl, rounded_new,
+            )
+            return True
+
+        # ── 3. Cancel existing SL orders ──────────────────────────────────────
         cancelled_any = False
         for order in existing_orders:
             ok = await self._cancel_order(signal.symbol, order.broker_order_id)
@@ -644,7 +680,7 @@ class BinanceExecutor:
         if cancelled_any:
             await session.commit()
 
-        # ── 3. Place new SL ───────────────────────────────────────────────────
+        # ── 4. Place new SL ───────────────────────────────────────────────────
         new_params: dict[str, Any] = {
             "symbol":        signal.symbol,
             "side":          side,
@@ -685,7 +721,7 @@ class BinanceExecutor:
                 signal.symbol, rounded_new, exc,
             )
 
-            # ── 4. Restore original SL if we cancelled it ─────────────────────
+            # ── 5. Restore original SL if we cancelled it ─────────────────────
             if cancelled_any:
                 logger.warning(
                     "BinanceExecutor: restoring original SL @ {} for {}",
@@ -741,10 +777,15 @@ class BinanceExecutor:
             data = resp.json()
             if resp.status_code != 200:
                 raise BinanceAPIError(
-                    f"HTTP {resp.status_code} — code={data.get('code')} msg={data.get('msg')}"
+                    f"HTTP {resp.status_code} — code={data.get('code')} msg={data.get('msg')}",
+                    code=data.get("code"),
                 )
             return data
 
 
 class BinanceAPIError(Exception):
     """Raised when Binance returns a non-200 response."""
+
+    def __init__(self, message: str, code: int | None = None) -> None:
+        super().__init__(message)
+        self.code = code

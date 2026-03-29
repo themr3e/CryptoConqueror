@@ -605,6 +605,127 @@ class BinanceExecutor:
             logger.opt(exception=True).error("BinanceExecutor: close_position error for {}", symbol)
             return False
 
+    async def update_stop_loss(
+        self,
+        session: AsyncSession,
+        signal: Signal,
+        new_stop_price: Decimal,
+    ) -> bool:
+        """Cancel the existing STOP_MARKET and place a new one at new_stop_price.
+
+        Safety guarantee: if the new order fails, the original stop is
+        immediately restored.  Returns True only when the new SL is live.
+        """
+        from sqlalchemy import select as sa_select, and_ as sa_and_
+
+        rounded_new = _round_price(new_stop_price, signal.symbol)
+        original_sl  = _round_price(signal.stop_loss, signal.symbol)
+        side = "SELL" if signal.direction == "BUY" else "BUY"
+
+        # ── 1. Find existing SL orders ────────────────────────────────────────
+        stmt = sa_select(TradeOrder).where(
+            sa_and_(
+                TradeOrder.signal_id   == signal.id,
+                TradeOrder.order_role  == "stop_loss",
+                TradeOrder.status      == "NEW",
+                TradeOrder.broker_order_id.isnot(None),
+            )
+        )
+        result = await session.execute(stmt)
+        existing_orders = result.scalars().all()
+
+        # ── 2. Cancel existing SL orders ──────────────────────────────────────
+        cancelled_any = False
+        for order in existing_orders:
+            ok = await self._cancel_order(signal.symbol, order.broker_order_id)
+            if ok:
+                order.status  = "CANCELED"
+                cancelled_any = True
+        if cancelled_any:
+            await session.commit()
+
+        # ── 3. Place new SL ───────────────────────────────────────────────────
+        new_params: dict[str, Any] = {
+            "symbol":        signal.symbol,
+            "side":          side,
+            "type":          "STOP_MARKET",
+            "stopPrice":     str(rounded_new),
+            "closePosition": "true",
+        }
+        try:
+            raw = await self._signed_post("/fapi/v1/order", new_params)
+            broker_order_id = str(raw.get("orderId", ""))
+            status          = raw.get("status", "NEW")
+
+            session.add(TradeOrder(
+                signal_id       = signal.id,
+                broker_order_id = broker_order_id,
+                order_role      = "stop_loss",
+                symbol          = signal.symbol,
+                side            = side,
+                order_type      = "STOP_MARKET",
+                quantity        = Decimal("0"),
+                stop_price      = rounded_new,
+                status          = status,
+                raw_response    = json.dumps(raw),
+                environment     = self._environment,
+            ))
+            signal.stop_loss = new_stop_price   # update in-memory + DB via ORM
+            await session.commit()
+
+            logger.info(
+                "BinanceExecutor: SL updated {} {} → {}",
+                signal.symbol, original_sl, rounded_new,
+            )
+            return True
+
+        except Exception as exc:
+            logger.error(
+                "BinanceExecutor: new SL failed for {} @ {} — {}",
+                signal.symbol, rounded_new, exc,
+            )
+
+            # ── 4. Restore original SL if we cancelled it ─────────────────────
+            if cancelled_any:
+                logger.warning(
+                    "BinanceExecutor: restoring original SL @ {} for {}",
+                    original_sl, signal.symbol,
+                )
+                try:
+                    restore_params: dict[str, Any] = {
+                        "symbol":        signal.symbol,
+                        "side":          side,
+                        "type":          "STOP_MARKET",
+                        "stopPrice":     str(original_sl),
+                        "closePosition": "true",
+                    }
+                    raw_r = await self._signed_post("/fapi/v1/order", restore_params)
+                    session.add(TradeOrder(
+                        signal_id       = signal.id,
+                        broker_order_id = str(raw_r.get("orderId", "")),
+                        order_role      = "stop_loss",
+                        symbol          = signal.symbol,
+                        side            = side,
+                        order_type      = "STOP_MARKET",
+                        quantity        = Decimal("0"),
+                        stop_price      = original_sl,
+                        status          = raw_r.get("status", "NEW"),
+                        raw_response    = json.dumps(raw_r),
+                        environment     = self._environment,
+                    ))
+                    await session.commit()
+                    logger.info(
+                        "BinanceExecutor: SL restored @ {} for {}",
+                        original_sl, signal.symbol,
+                    )
+                except Exception as restore_exc:
+                    logger.critical(
+                        "BinanceExecutor: CRITICAL — could not restore SL for {} "
+                        "— position exposed! restore_error={}",
+                        signal.symbol, restore_exc,
+                    )
+            return False
+
     async def _signed_delete(
         self,
         path: str,

@@ -344,7 +344,7 @@ async def job_detect_crypto_outcomes() -> None:
             if outcomes:
                 logger.info("[Job] detect_crypto_outcomes: {} outcome(s) recorded", len(outcomes))
 
-                # Cancel any dangling SL/TP orders for closed signals
+                # Close actual Binance positions and cancel dangling SL/TP orders
                 if settings.binance_order_execution_enabled:
                     executor = _get_binance_executor()
                     from app.models.signal import Signal
@@ -356,6 +356,7 @@ async def job_detect_crypto_outcomes() -> None:
                             )
                             signal = signal_result.scalar_one_or_none()
                             if signal:
+                                # Cancel any dangling SL/TP orders first
                                 cancelled = await executor.cancel_signal_orders(
                                     session, signal.id, signal.symbol
                                 )
@@ -364,9 +365,25 @@ async def job_detect_crypto_outcomes() -> None:
                                         "[Job] Cancelled {} dangling order(s) for signal {}",
                                         cancelled, signal.id,
                                     )
+                                # Close the actual Binance position so DB outcome
+                                # matches reality (prevents stale open positions
+                                # from corrupting win-rate data)
+                                pos_size = await executor.get_open_position_size(signal.symbol)
+                                if pos_size != 0.0:
+                                    closed = await executor.close_position(signal.symbol, pos_size)
+                                    if closed:
+                                        logger.info(
+                                            "[Job] Closed Binance position for signal {} {} (size={})",
+                                            signal.id, signal.symbol, pos_size,
+                                        )
+                                    else:
+                                        logger.warning(
+                                            "[Job] Failed to close Binance position for signal {} {}",
+                                            signal.id, signal.symbol,
+                                        )
                         except Exception:
                             logger.opt(exception=True).warning(
-                                "[Job] Failed to cancel orders for outcome {}", outcome.id
+                                "[Job] Failed to close/cancel orders for outcome {}", outcome.id
                             )
         except Exception:
             logger.opt(exception=True).error("[Job] detect_crypto_outcomes failed")

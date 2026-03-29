@@ -306,7 +306,7 @@ class ClaudeTradeAgent:
                 if candles:
                     lines.append(f"[{tf}] " + " | ".join(
                         f"{float(c.close):.4f}" for c in candles
-                    ) + f" (latest close)")
+                    ) + " (latest close)")
 
             open_result = await session.execute(
                 select(Signal).where(Signal.symbol == symbol, Signal.status == "active")
@@ -314,9 +314,26 @@ class ClaudeTradeAgent:
             open_sigs = open_result.scalars().all()
             if open_sigs:
                 s = open_sigs[0]
-                lines.append(f"OPEN: {s.direction} @ {float(s.entry_price):.4f} SL={float(s.stop_loss):.4f}")
+                lines.append(f"OPEN: {s.direction} @ {float(s.entry_price):.4f} SL={float(s.stop_loss):.4f} TP={float(s.take_profit_1):.4f}")
             else:
                 lines.append("OPEN: none")
+
+            # Recent win rate for this symbol (last 10 outcomes)
+            recent_result = await session.execute(
+                select(Outcome)
+                .join(Signal, Outcome.signal_id == Signal.id)
+                .where(Signal.symbol == symbol)
+                .order_by(Outcome.created_at.desc())
+                .limit(10)
+            )
+            recent = recent_result.scalars().all()
+            if recent:
+                wins = sum(1 for o in recent if o.result in ("tp1_hit", "tp2_hit"))
+                total = len(recent)
+                total_pnl = sum(float(o.pnl_usdt or 0) for o in recent)
+                lines.append(f"HISTORY: {wins}/{total} wins ({wins/total*100:.0f}%) | P&L=${total_pnl:+.2f}")
+            else:
+                lines.append("HISTORY: no closed trades yet")
             lines.append("")
 
         return "\n".join(lines)
@@ -425,19 +442,26 @@ class ClaudeTradeAgent:
             lines.append("--- Open Positions: None ---")
         lines.append("")
 
-        # Recent outcomes
+        # Recent outcomes (last 10 — use pnl_usdt for crypto)
         recent_result = await session.execute(
             select(Outcome)
             .join(Signal, Outcome.signal_id == Signal.id)
             .where(Signal.symbol == symbol)
             .order_by(Outcome.created_at.desc())
-            .limit(5)
+            .limit(10)
         )
         recent = recent_result.scalars().all()
         if recent:
-            lines.append("--- Recent Outcomes ---")
+            wins = sum(1 for o in recent if o.result in ("tp1_hit", "tp2_hit"))
+            total = len(recent)
+            win_rate = wins / total * 100
+            total_pnl = sum(float(o.pnl_usdt or 0) for o in recent)
+            lines.append(f"--- Recent Outcomes (last {total}) ---")
+            lines.append(f"Win rate: {wins}/{total} ({win_rate:.0f}%) | Total P&L: ${total_pnl:+.2f}")
             for o in recent:
-                lines.append(f"{o.result} pnl={float(o.pnl_pips):+.1f} pips")
+                lines.append(f"  {o.result} pnl=${float(o.pnl_usdt or 0):+.2f}")
+        else:
+            lines.append("--- Recent Outcomes: none yet ---")
         lines.append("")
 
         return "\n".join(lines)

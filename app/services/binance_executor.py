@@ -567,6 +567,44 @@ class BinanceExecutor:
             logger.opt(exception=True).warning("[BinanceExecutor] get_open_position_size failed for {}", symbol)
             return 0.0  # safe default: assume no position on error
 
+    async def close_position(self, symbol: str, position_size: float) -> bool:
+        """Close an open position with a MARKET reduceOnly order.
+
+        Args:
+            symbol:        Binance symbol, e.g. "BTCUSDT".
+            position_size: Current position size from positionRisk (negative = SHORT).
+
+        Returns:
+            True if the close order was accepted, False otherwise.
+        """
+        if position_size == 0.0:
+            return True
+
+        # Positive size = LONG (close with SELL); negative = SHORT (close with BUY)
+        side = "SELL" if position_size > 0 else "BUY"
+        quantity = _round_quantity(Decimal(str(abs(position_size))), symbol)
+
+        params: dict[str, Any] = {
+            "symbol":     symbol,
+            "side":       side,
+            "type":       "MARKET",
+            "quantity":   str(quantity),
+            "reduceOnly": "true",
+        }
+        try:
+            await self._signed_post("/fapi/v1/order", params)
+            logger.info(
+                "BinanceExecutor: close_position {} size={} → {} MARKET qty={}",
+                symbol, position_size, side, quantity,
+            )
+            return True
+        except BinanceAPIError as exc:
+            logger.error("BinanceExecutor: close_position failed for {} — {}", symbol, exc)
+            return False
+        except Exception:
+            logger.opt(exception=True).error("BinanceExecutor: close_position error for {}", symbol)
+            return False
+
     async def _signed_delete(
         self,
         path: str,

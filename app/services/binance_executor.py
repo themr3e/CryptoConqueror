@@ -66,7 +66,7 @@ _LOT_SIZE_DEFAULTS: dict[str, Decimal] = {
     "XRPUSDT":    Decimal("1"),
     "ADAUSDT":    Decimal("1"),
     "DOGEUSDT":   Decimal("1"),
-    "AVAXUSDT":   Decimal("0.1"),
+    "AVAXUSDT":   Decimal("1"),
     "LINKUSDT":   Decimal("0.01"),
     "DOTUSDT":    Decimal("0.1"),
     "LTCUSDT":    Decimal("0.01"),

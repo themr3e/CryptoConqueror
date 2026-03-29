@@ -439,7 +439,7 @@ def register_jobs(scheduler: AsyncIOScheduler) -> None:
         Crypto (active only when CRYPTO_ENABLED=true):
         - fetch_crypto_candles    : every 15 minutes (Binance Futures)
         - generate_crypto_signals : every hour at :05
-        - detect_crypto_outcomes  : every 5 minutes
+        - detect_crypto_outcomes  : every 2 minutes
 
         Claude agent (active only when CLAUDE_AGENT_ENABLED=true):
         - claude_agent            : every 30 minutes
@@ -495,7 +495,7 @@ def register_jobs(scheduler: AsyncIOScheduler) -> None:
     scheduler.add_job(
         job_detect_crypto_outcomes,
         trigger="interval",
-        minutes=5,
+        minutes=2,
         id="detect_crypto_outcomes",
         name="Detect crypto signal outcomes",
     )

@@ -85,6 +85,25 @@ async def bootstrap_data() -> None:
         else:
             logger.warning("Bootstrap: crypto disabled (CRYPTO_ENABLED=false) — set CRYPTO_ENABLED=true")
 
+    # ── Step 3: Run backtests if no results exist yet ─────────────────────
+    # job_run_backtests only fires at 02:00 UTC; on a fresh deploy the
+    # BacktestResult table is empty, so StrategySelector never selects a
+    # strategy and zero signals are generated.  Run it once at startup.
+    if settings.crypto_enabled:
+        from app.models.backtest_result import BacktestResult
+        from app.workers.jobs import job_run_backtests
+        async with async_sessionmaker() as check_session:
+            count = await check_session.scalar(
+                select(func.count()).select_from(BacktestResult)
+            ) or 0
+        if count == 0:
+            logger.info("Bootstrap: no BacktestResult rows — running initial backtest...")
+            try:
+                await job_run_backtests()
+                logger.info("Bootstrap: initial backtest complete")
+            except Exception:
+                logger.opt(exception=True).warning("Bootstrap: initial backtest failed")
+
     logger.info("Bootstrap: data initialization complete")
 
 

@@ -136,7 +136,13 @@ def _get_feedback_controller() -> FeedbackController:
 # ---------------------------------------------------------------------------
 
 async def job_run_backtests() -> None:
-    """Run rolling backtests for all active strategies."""
+    """Run rolling backtests for all active strategies and persist results to DB.
+
+    The StrategySelector queries BacktestResult rows to decide which strategy
+    to use for signal generation.  Without persisted rows, no signals are ever
+    generated.  This job runs daily and writes fresh BacktestResult records so
+    the selector always has up-to-date data.
+    """
     settings = get_settings()
     if not settings.crypto_enabled:
         return
@@ -146,8 +152,11 @@ async def job_run_backtests() -> None:
     async with async_sessionmaker() as session:
         try:
             import pandas as pd
+            from datetime import datetime, timezone, timedelta
             from sqlalchemy import and_, select
+            from app.models.backtest_result import BacktestResult
             from app.models.candle import Candle
+            from app.models.strategy import Strategy
 
             symbol = settings.crypto_symbol_list[0] if settings.crypto_symbol_list else "BTCUSDT"
             stmt = (
@@ -173,15 +182,51 @@ async def job_run_backtests() -> None:
             } for c in candles_orm]).set_index("timestamp")
             df.attrs["symbol"] = symbol
 
-            results = runner.run_all_strategies(df)
+            backtest_results = runner.run_all_strategies(df)
+
+            # ── Persist BacktestResult records ────────────────────────────────
+            now = datetime.now(timezone.utc)
+            saved = 0
+            for strategy_name, window_results in backtest_results.items():
+                strat_row = await session.execute(
+                    select(Strategy).where(Strategy.name == strategy_name)
+                )
+                strategy_orm = strat_row.scalar_one_or_none()
+                if strategy_orm is None:
+                    logger.warning(
+                        "[Job] run_backtests: strategy '{}' not found in DB — skipping",
+                        strategy_name,
+                    )
+                    continue
+
+                for window_days, (metrics, _trades) in window_results.items():
+                    session.add(BacktestResult(
+                        strategy_id=strategy_orm.id,
+                        timeframe="H1",
+                        window_days=window_days,
+                        start_date=now - timedelta(days=window_days),
+                        end_date=now,
+                        win_rate=metrics.win_rate,
+                        profit_factor=metrics.profit_factor,
+                        sharpe_ratio=metrics.sharpe_ratio,
+                        max_drawdown=metrics.max_drawdown,
+                        expectancy=metrics.expectancy,
+                        total_trades=metrics.total_trades,
+                        is_walk_forward=False,
+                    ))
+                    saved += 1
+
+            await session.commit()
+
             total_trades = sum(
                 len(trades)
-                for strat_results in results.values()
+                for strat_results in backtest_results.values()
                 for _metrics, trades in strat_results.values()
             )
             logger.info(
-                "[Job] run_backtests: {} strategy(ies), {} simulated trade(s)",
-                len(results), total_trades,
+                "[Job] run_backtests: {} strategy(ies), {} simulated trade(s), "
+                "{} BacktestResult row(s) saved",
+                len(backtest_results), total_trades, saved,
             )
         except Exception:
             logger.opt(exception=True).error("[Job] run_backtests failed")

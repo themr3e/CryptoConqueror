@@ -96,13 +96,12 @@ async def bootstrap_data() -> None:
             count = await check_session.scalar(
                 select(func.count()).select_from(BacktestResult)
             ) or 0
-        if count == 0:
-            logger.info("Bootstrap: no BacktestResult rows — running initial backtest...")
-            try:
-                await job_run_backtests()
-                logger.info("Bootstrap: initial backtest complete")
-            except Exception:
-                logger.opt(exception=True).warning("Bootstrap: initial backtest failed")
+        logger.info("Bootstrap: running backtest ({} existing rows)...", count)
+        try:
+            await job_run_backtests()
+            logger.info("Bootstrap: backtest complete")
+        except Exception:
+            logger.opt(exception=True).warning("Bootstrap: backtest failed")
 
     logger.info("Bootstrap: data initialization complete")
 

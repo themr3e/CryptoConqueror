@@ -158,31 +158,58 @@ async def job_run_backtests() -> None:
             from app.models.candle import Candle
             from app.models.strategy import Strategy
 
-            symbol = settings.crypto_symbol_list[0] if settings.crypto_symbol_list else "BTCUSDT"
-            stmt = (
-                select(Candle)
-                .where(and_(Candle.symbol == symbol, Candle.timeframe == "H1"))
-                .order_by(Candle.timestamp.asc())
-                .limit(2000)
-            )
-            result = await session.execute(stmt)
-            candles_orm = result.scalars().all()
+            # Run on up to 5 symbols and aggregate metrics so strategies
+            # accumulate enough trades to pass MIN_TRADES_QUALIFY.
+            sample_symbols = settings.crypto_symbol_list[:5] if settings.crypto_symbol_list else ["BTCUSDT"]
 
-            if not candles_orm:
-                logger.warning("[Job] run_backtests: no H1 candles for {} — skipping", symbol)
-                return
+            # Collect (metrics, trades) per strategy+window across all symbols
+            from collections import defaultdict
+            from app.services.metrics_calculator import MetricsCalculator
+            from app.strategies.base import BaseStrategy
+            aggregated: dict[str, dict[int, list]] = defaultdict(lambda: defaultdict(list))
 
-            df = pd.DataFrame([{
-                "timestamp": c.timestamp,
-                "open":   float(c.open),
-                "high":   float(c.high),
-                "low":    float(c.low),
-                "close":  float(c.close),
-                "volume": float(c.volume) if c.volume is not None else 0.0,
-            } for c in candles_orm]).set_index("timestamp")
-            df.attrs["symbol"] = symbol
+            for symbol in sample_symbols:
+                stmt = (
+                    select(Candle)
+                    .where(and_(Candle.symbol == symbol, Candle.timeframe == "H1"))
+                    .order_by(Candle.timestamp.asc())
+                    .limit(2000)
+                )
+                result = await session.execute(stmt)
+                candles_orm = result.scalars().all()
 
-            backtest_results = runner.run_all_strategies(df)
+                if not candles_orm:
+                    logger.warning("[Job] run_backtests: no H1 candles for {} — skipping", symbol)
+                    continue
+
+                df = pd.DataFrame([{
+                    "timestamp": c.timestamp,
+                    "open":   float(c.open),
+                    "high":   float(c.high),
+                    "low":    float(c.low),
+                    "close":  float(c.close),
+                    "volume": float(c.volume) if c.volume is not None else 0.0,
+                } for c in candles_orm]).set_index("timestamp")
+                df.attrs["symbol"] = symbol
+
+                sym_results = runner.run_all_strategies(df)
+                for strategy_name, window_map in sym_results.items():
+                    for window_days, (_metrics, trades) in window_map.items():
+                        aggregated[strategy_name][window_days].extend(trades)
+
+            # Recompute metrics from all-symbol aggregated trades
+            metrics_calc = MetricsCalculator()
+            backtest_results: dict[str, dict[int, tuple]] = {}
+            for strategy_name, window_map in aggregated.items():
+                backtest_results[strategy_name] = {}
+                for window_days, all_trades in window_map.items():
+                    metrics = metrics_calc.compute(all_trades)
+                    backtest_results[strategy_name][window_days] = (metrics, all_trades)
+                    logger.info(
+                        "[Job] run_backtests: {} window={}d trades={} wr={} pf={}",
+                        strategy_name, window_days, metrics.total_trades,
+                        metrics.win_rate, metrics.profit_factor,
+                    )
 
             # ── Persist BacktestResult records ────────────────────────────────
             now = datetime.now(timezone.utc)

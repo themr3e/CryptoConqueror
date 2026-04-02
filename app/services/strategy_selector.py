@@ -19,7 +19,7 @@ from app.models.candle import Candle
 from app.models.strategy import Strategy
 from app.models.strategy_performance import StrategyPerformance
 
-MIN_TRADES_QUALIFY = 8
+MIN_TRADES_QUALIFY = 2
 MIN_LIVE_SIGNALS_BLEND = 5
 
 SCORE_WEIGHTS = {

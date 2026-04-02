@@ -15,6 +15,7 @@ Testnet sign-up: https://testnet.binancefuture.com (login with GitHub)
 
 from __future__ import annotations
 
+import asyncio
 import hashlib
 import hmac
 import json
@@ -530,45 +531,80 @@ class BinanceExecutor:
     def _headers(self) -> dict[str, str]:
         return {"X-MBX-APIKEY": self._api_key}
 
+    @staticmethod
+    def _is_retryable(status_code: int) -> bool:
+        """Return True for transient HTTP errors worth retrying."""
+        return status_code in (429, 500, 502, 503, 504)
+
     async def _signed_post(
         self,
         path: str,
         params: dict[str, Any],
+        _retries: int = 2,
     ) -> dict[str, Any]:
-        signed = self._sign(dict(params))
-        async with httpx.AsyncClient(timeout=self._timeout) as client:
-            resp = await client.post(
-                f"{self._base_url}{path}",
-                data=signed,
-                headers=self._headers(),
-            )
-            data = resp.json()
-            if resp.status_code != 200:
-                raise BinanceAPIError(
-                    f"HTTP {resp.status_code} — code={data.get('code')} msg={data.get('msg')}",
-                    code=data.get("code"),
-                )
-            return data
+        last_exc: Exception | None = None
+        for attempt in range(_retries + 1):
+            try:
+                signed = self._sign(dict(params))
+                async with httpx.AsyncClient(timeout=self._timeout) as client:
+                    resp = await client.post(
+                        f"{self._base_url}{path}",
+                        data=signed,
+                        headers=self._headers(),
+                    )
+                    data = resp.json()
+                    if resp.status_code == 200:
+                        return data
+                    if not self._is_retryable(resp.status_code) or attempt == _retries:
+                        raise BinanceAPIError(
+                            f"HTTP {resp.status_code} — code={data.get('code')} msg={data.get('msg')}",
+                            code=data.get("code"),
+                        )
+                    last_exc = BinanceAPIError(
+                        f"HTTP {resp.status_code} (retrying)", code=data.get("code")
+                    )
+            except (httpx.TimeoutException, httpx.ConnectError) as exc:
+                last_exc = exc
+                if attempt == _retries:
+                    raise
+            logger.warning("BinanceExecutor: POST {} retry {}/{} after transient error", path, attempt + 1, _retries)
+            await asyncio.sleep(1 * (attempt + 1))
+        raise last_exc  # unreachable, but satisfies type checker
 
     async def _signed_get(
         self,
         path: str,
         params: dict[str, Any],
+        _retries: int = 2,
     ) -> dict[str, Any]:
-        signed = self._sign(dict(params))
-        async with httpx.AsyncClient(timeout=self._timeout) as client:
-            resp = await client.get(
-                f"{self._base_url}{path}",
-                params=signed,
-                headers=self._headers(),
-            )
-            data = resp.json()
-            if resp.status_code != 200:
-                raise BinanceAPIError(
-                    f"HTTP {resp.status_code} — code={data.get('code')} msg={data.get('msg')}",
-                    code=data.get("code"),
-                )
-            return data
+        last_exc: Exception | None = None
+        for attempt in range(_retries + 1):
+            try:
+                signed = self._sign(dict(params))
+                async with httpx.AsyncClient(timeout=self._timeout) as client:
+                    resp = await client.get(
+                        f"{self._base_url}{path}",
+                        params=signed,
+                        headers=self._headers(),
+                    )
+                    data = resp.json()
+                    if resp.status_code == 200:
+                        return data
+                    if not self._is_retryable(resp.status_code) or attempt == _retries:
+                        raise BinanceAPIError(
+                            f"HTTP {resp.status_code} — code={data.get('code')} msg={data.get('msg')}",
+                            code=data.get("code"),
+                        )
+                    last_exc = BinanceAPIError(
+                        f"HTTP {resp.status_code} (retrying)", code=data.get("code")
+                    )
+            except (httpx.TimeoutException, httpx.ConnectError) as exc:
+                last_exc = exc
+                if attempt == _retries:
+                    raise
+            logger.warning("BinanceExecutor: GET {} retry {}/{} after transient error", path, attempt + 1, _retries)
+            await asyncio.sleep(1 * (attempt + 1))
+        raise last_exc  # unreachable
 
     async def get_open_position_size(self, symbol: str) -> float:
         """Return the current position size on Binance for a symbol (0 = no position)."""
@@ -587,7 +623,11 @@ class BinanceExecutor:
             return 0.0  # safe default: assume no position on error
 
     async def close_position(self, symbol: str, position_size: float) -> bool:
-        """Close an open position with a MARKET reduceOnly order.
+        """Close an open position with a MARKET order.
+
+        Tries closePosition=true first (works on Demo and mainnet).
+        Falls back to quantity+reduceOnly if the first attempt fails,
+        which handles edge cases where closePosition is rejected.
 
         Args:
             symbol:        Binance symbol, e.g. "BTCUSDT".
@@ -601,9 +641,30 @@ class BinanceExecutor:
 
         # Positive size = LONG (close with SELL); negative = SHORT (close with BUY)
         side = "SELL" if position_size > 0 else "BUY"
-        quantity = _round_quantity(Decimal(str(abs(position_size))), symbol)
 
+        # Primary approach: closePosition=true avoids -4120 on Demo env
         params: dict[str, Any] = {
+            "symbol":        symbol,
+            "side":          side,
+            "type":          "MARKET",
+            "closePosition": "true",
+        }
+        try:
+            await self._signed_post("/fapi/v1/order", params)
+            logger.info(
+                "BinanceExecutor: close_position {} size={} → {} MARKET closePosition=true",
+                symbol, position_size, side,
+            )
+            return True
+        except BinanceAPIError as exc:
+            logger.warning(
+                "BinanceExecutor: close_position closePosition=true failed for {} — {} — trying quantity fallback",
+                symbol, exc,
+            )
+
+        # Fallback: explicit quantity + reduceOnly
+        quantity = _round_quantity(Decimal(str(abs(position_size))), symbol)
+        params_fallback: dict[str, Any] = {
             "symbol":     symbol,
             "side":       side,
             "type":       "MARKET",
@@ -611,9 +672,9 @@ class BinanceExecutor:
             "reduceOnly": "true",
         }
         try:
-            await self._signed_post("/fapi/v1/order", params)
+            await self._signed_post("/fapi/v1/order", params_fallback)
             logger.info(
-                "BinanceExecutor: close_position {} size={} → {} MARKET qty={}",
+                "BinanceExecutor: close_position {} size={} → {} MARKET qty={} (fallback)",
                 symbol, position_size, side, quantity,
             )
             return True
@@ -766,21 +827,36 @@ class BinanceExecutor:
         self,
         path: str,
         params: dict[str, Any],
+        _retries: int = 2,
     ) -> dict[str, Any]:
-        signed = self._sign(dict(params))
-        async with httpx.AsyncClient(timeout=self._timeout) as client:
-            resp = await client.delete(
-                f"{self._base_url}{path}",
-                params=signed,
-                headers=self._headers(),
-            )
-            data = resp.json()
-            if resp.status_code != 200:
-                raise BinanceAPIError(
-                    f"HTTP {resp.status_code} — code={data.get('code')} msg={data.get('msg')}",
-                    code=data.get("code"),
-                )
-            return data
+        last_exc: Exception | None = None
+        for attempt in range(_retries + 1):
+            try:
+                signed = self._sign(dict(params))
+                async with httpx.AsyncClient(timeout=self._timeout) as client:
+                    resp = await client.delete(
+                        f"{self._base_url}{path}",
+                        params=signed,
+                        headers=self._headers(),
+                    )
+                    data = resp.json()
+                    if resp.status_code == 200:
+                        return data
+                    if not self._is_retryable(resp.status_code) or attempt == _retries:
+                        raise BinanceAPIError(
+                            f"HTTP {resp.status_code} — code={data.get('code')} msg={data.get('msg')}",
+                            code=data.get("code"),
+                        )
+                    last_exc = BinanceAPIError(
+                        f"HTTP {resp.status_code} (retrying)", code=data.get("code")
+                    )
+            except (httpx.TimeoutException, httpx.ConnectError) as exc:
+                last_exc = exc
+                if attempt == _retries:
+                    raise
+            logger.warning("BinanceExecutor: DELETE {} retry {}/{} after transient error", path, attempt + 1, _retries)
+            await asyncio.sleep(1 * (attempt + 1))
+        raise last_exc  # unreachable
 
 
 class BinanceAPIError(Exception):

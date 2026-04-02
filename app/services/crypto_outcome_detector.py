@@ -24,7 +24,7 @@ from app.services.telegram_notifier import TelegramNotifier
 
 # Price cache: symbol → (price, fetched_at)
 _price_cache: dict[str, tuple[float, datetime]] = {}
-_CACHE_TTL_SECONDS = 300  # 5 minutes
+_CACHE_TTL_SECONDS = 30  # 30 seconds — must be shorter than the 2-min detection interval
 
 
 class CryptoOutcomeDetector:

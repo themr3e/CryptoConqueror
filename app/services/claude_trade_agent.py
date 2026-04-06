@@ -54,7 +54,7 @@ Rules:
 - Return exactly one object per symbol provided — same order as input
 - Use "hold" when conditions are unclear or risky
 - Always set stop_loss and take_profit for open_long/open_short
-- stop_loss must be at least 0.5% from entry
+- stop_loss must be at least 1.5% from entry
 - take_profit must give minimum 1.5:1 risk/reward ratio
 - Consider H4 and H1 trends before entering
 - Avoid trading against the dominant trend

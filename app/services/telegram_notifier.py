@@ -103,13 +103,15 @@ class TelegramNotifier:
                 "expired": "⏰ Expired",
             }
             label = result_map.get(outcome.result, outcome.result)
-            pnl_sign = "+" if float(outcome.pnl_pips) >= 0 else ""
+            pnl_val = float(outcome.pnl_usdt) if outcome.pnl_usdt is not None else 0.0
+            pnl_sign = "+" if pnl_val >= 0 else ""
             text = (
                 f"{label}\n\n"
+                f"<b>Symbol:</b> {signal.symbol}\n"
                 f"<b>Direction:</b> {signal.direction}\n"
-                f"<b>Entry:</b> {float(signal.entry_price):.2f}\n"
-                f"<b>Exit:</b> {float(outcome.exit_price):.2f}\n"
-                f"<b>PnL:</b> {pnl_sign}{float(outcome.pnl_pips):.1f} pips\n"
+                f"<b>Entry:</b> {float(signal.entry_price):.4f}\n"
+                f"<b>Exit:</b> {float(outcome.exit_price):.4f}\n"
+                f"<b>PnL:</b> {pnl_sign}{pnl_val:.2f} USDT\n"
             )
             await self._send_message(text)
         except Exception:

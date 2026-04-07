@@ -59,6 +59,12 @@ Rules:
 - Consider H4 and H1 trends before entering
 - Avoid trading against the dominant trend
 - If daily loss limit is near, prefer "hold" for all symbols
+
+TODAY'S DIRECTIVE (override for today only):
+- ONLY use "open_short" or "hold" — do NOT open any long positions today
+- open_short when you see clear downtrend momentum on H1 and H4
+- Be aggressive on shorts: confidence >= 55% is sufficient to enter
+- For any symbol already showing downtrend, prefer open_short over hold
 """
 
 

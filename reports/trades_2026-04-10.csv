@@ -1,0 +1,33 @@
+symbol,side,status,entry_price,win_rate,trades_sample,known_pnl_usdt,agent_decision_1550,agent_decision_1620,agent_decision_1635,classification,notes
+RENDERUSDT,BUY,closed_sl,2.003,0.10,10,-0.0438,close_0pct,hold_0pct,hold_22pct,LOSS,Stopped out at 2.003; Binance close used qty fallback after -4136 error (size=244.0)
+ETHUSDT,LONG,open,,0.00,10,-198.28,hold_25pct,hold_0pct,hold_0pct,LOSS_OPEN,0/10 wins; H1 uptrend ignored because historical PF=0
+WLDUSDT,LONG,open,,0.00,10,,hold_20pct,hold_0pct,hold_0pct,LOSS_OPEN,0/10 systematic strategy failure
+FILUSDT,LONG,open,,0.00,10,,hold_25pct,hold_0pct,hold_0pct,LOSS_OPEN,0/10; H1 weak uptrend
+APTUSDT,LONG,open,0.8597,0.00,8,,close_75pct,hold_0pct,hold_0pct,LOSS_OPEN,0/8 systematic losses; agent wants to close
+BNBUSDT,FLAT,none,,0.00,3,,hold_30pct,hold_0pct,hold_0pct,NO_TRADES_VIABLE,0/3 consolidating
+LTCUSDT,FLAT,none,,0.00,3,-1.25,hold_30pct,hold_0pct,hold_0pct,LOSS,0/3 on 3 trades
+AAVEUSDT,FLAT,none,,0.10,10,-5.80,hold_28pct,hold_0pct,hold_0pct,LOSS,10% wr with -$5.80
+AVAXUSDT,LONG,open,9.44,0.10,10,-0.61,close_70pct,hold_0pct,hold_0pct,LOSS_OPEN,H4 weakening
+INJUSDT,LONG,open,3.059,0.20,10,-0.09,close_65pct,hold_0pct,hold_0pct,LOSS_OPEN,H4 weaker than H1
+DOTUSDT,LONG,open,1.315,0.10,10,,close_65pct,hold_0pct,hold_0pct,LOSS_OPEN,10% wr; circuit breaker blocked new DOT entry
+UNIUSDT,LONG,open,3.183,0.20,10,,close_65pct,hold_0pct,hold_0pct,LOSS_OPEN,H4 showing weakness; circuit breaker blocked new entry
+ARBUSDT,LONG,open,0.11,0.20,10,,close_60pct,hold_0pct,hold_0pct,LOSS_OPEN,Consolidating
+ADAUSDT,LONG,open,0.2556,0.33,12,,close_60pct,hold_0pct,hold_0pct,LOSS_OPEN,H4 reversal minimal profit
+ATOMUSDT,LONG,open,1.84,0.20,10,,close_60pct,hold_0pct,hold_0pct,LOSS_OPEN,H4 flat
+JUPUSDT,LONG,open,0.1647,0.20,10,,close_60pct,hold_0pct,hold_0pct,LOSS_OPEN,H4 consolidating
+LINKUSDT,LONG,open,9.12,0.20,10,,close_65pct,hold_0pct,hold_0pct,LOSS_OPEN,Poor historical
+NEARUSDT,LONG,open,1.384,0.10,10,,close_65pct,hold_0pct,hold_0pct,LOSS_OPEN,H4 weak relative to entry
+SOLUSDT,LONG,open,85.10,0.20,10,,close_70pct,hold_0pct,hold_0pct,LOSS_OPEN,H1 momentum fading
+SUIUSDT,LONG,open,0.9486,0.20,10,,close_62pct,hold_0pct,hold_0pct,LOSS_OPEN,H4 consolidating
+XRPUSDT,LONG,open,1.3582,0.30,10,,close_65pct,hold_0pct,hold_0pct,LOSS_OPEN,H4 weakness
+BTCUSDT,FLAT,none,,,,,hold_35pct,hold_0pct,hold_0pct,NO_TRADES_VIABLE,Strong uptrend but account down $1975
+DOGEUSDT,FLAT,none,,0.14,,,hold_28pct,hold_0pct,hold_0pct,NO_TRADES_VIABLE,14% wr weak uptrend
+FETUSDT,FLAT,none,,0.10,10,,hold_25pct,hold_0pct,hold_0pct,NO_TRADES_VIABLE,H4 downtrend
+MATICUSDT,FLAT,halted,0.3846,,,,hold_10pct,hold_0pct,hold_0pct,NO_DATA,No price movement; possibly illiquid/halted
+MKRUSDT,FLAT,halted,,,,,hold_10pct,hold_0pct,hold_0pct,NO_DATA,No price movement
+OPUSDT,FLAT,none,,0.10,10,,hold_32pct,hold_0pct,hold_0pct,NO_TRADES_VIABLE,10% wr consolidation
+PYTHUSDT,FLAT,none,,0.20,,,hold_30pct,hold_0pct,hold_0pct,NO_TRADES_VIABLE,H4 choppy
+RUNEUSDT,FLAT,none,,0.17,,,hold_32pct,hold_0pct,hold_0pct,NO_TRADES_VIABLE,Circuit breaker blocked new RUNE entry
+SEIUSDT,FLAT,none,,0.10,10,,hold_25pct,hold_0pct,hold_0pct,NO_TRADES_VIABLE,H4 consolidating
+STXUSDT,FLAT,none,,0.29,,,hold_35pct,hold_0pct,hold_0pct,NO_TRADES_VIABLE,H4 downtrend
+TIAUSDT,FLAT,none,,0.10,10,,hold_28pct,hold_0pct,hold_0pct,NO_TRADES_VIABLE,H4 consolidating

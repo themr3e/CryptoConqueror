@@ -18,6 +18,7 @@ from app.api.candles import router as candles_router
 from app.api.chart import router as chart_router
 from app.api.dashboard import router as dashboard_router
 from app.api.health import router as health_router
+from app.api.logs import router as logs_router
 from app.api.settings import router as settings_router
 from app.api.status import router as status_router
 
@@ -150,4 +151,5 @@ app.include_router(status_router)
 app.include_router(candles_router)
 app.include_router(chart_router)
 app.include_router(dashboard_router)
+app.include_router(logs_router)
 app.include_router(settings_router)

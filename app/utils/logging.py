@@ -56,4 +56,9 @@ def setup_logging() -> None:
             diagnose=True,
         )
 
+    # Add in-memory buffer sink so /logs endpoint can serve recent entries
+    from app.utils.log_buffer import log_buffer
+
+    logger.add(log_buffer.sink, level=log_level, format="{message}")
+
     logger.info("Logging configured: level={}, json={}", log_level, log_json)

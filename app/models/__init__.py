@@ -11,3 +11,5 @@ from app.models.optimized_params import OptimizedParams  # noqa: F401
 from app.models.crypto_fee_config import CryptoFeeConfig  # noqa: F401
 from app.models.trade_order import TradeOrder  # noqa: F401
 from app.models.claude_decision import ClaudeDecision  # noqa: F401
+from app.models.raw_trade import RawTrade  # noqa: F401
+from app.models.footprint_bar import FootprintBar  # noqa: F401

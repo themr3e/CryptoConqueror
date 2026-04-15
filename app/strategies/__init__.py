@@ -2,8 +2,10 @@
 
 from app.strategies.crypto_momentum import CryptoMomentumStrategy
 from app.strategies.crypto_breakout import CryptoBreakoutStrategy
+from app.strategies.footprint_imbalance import FootprintImbalanceStrategy
 
 __all__ = [
     "CryptoMomentumStrategy",
     "CryptoBreakoutStrategy",
+    "FootprintImbalanceStrategy",
 ]

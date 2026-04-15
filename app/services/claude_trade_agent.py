@@ -56,9 +56,18 @@ Rules:
 - Always set stop_loss and take_profit for open_long/open_short
 - stop_loss must be at least 1.5% from entry
 - take_profit must give minimum 1.5:1 risk/reward ratio
-- Consider H4 and H1 trends before entering
-- Avoid trading against the dominant trend
-- If daily loss limit is near, prefer "hold" for all symbols
+- You reason on order-flow footprint only (POC, VAH, VAL, 1-min delta,
+  cumulative delta, stacked imbalance count + side, and price-vs-cumΔ
+  divergence). No candles, no past signals, and no historical win rate
+  are provided — do not ask for them.
+- Prefer "open_long"  when: stacked imbalance side is BUY, cumulative
+  delta is rising, and price is trading at or above VAH (or reclaiming VAL).
+- Prefer "open_short" when: stacked imbalance side is SELL, cumulative
+  delta is falling, and price is trading at or below VAL (or rejecting VAH).
+- Use POC as the anchor for take-profit, VAL/VAH as stop-loss anchors.
+- If a bearish/bullish divergence is reported, treat it as an exhaustion
+  signal and avoid entering in the exhausted direction.
+- If daily loss limit is near, prefer "hold" for all symbols.
 
 """
 
@@ -282,7 +291,87 @@ class ClaudeTradeAgent:
     async def _build_batch_context(
         self, session: AsyncSession, symbols: list[str], daily_pnl: float
     ) -> str:
-        """Build combined market context for all symbols."""
+        """Build order-flow context for all symbols.
+
+        Footprint / volume-profile data is the **sole** market context
+        provided to Claude. Candles, past signals, and outcome history
+        are intentionally omitted — Claude reasons on live order flow only.
+
+        The legacy candle-based context is still available via
+        :meth:`_build_batch_context_legacy` for rollback.
+        """
+        from app.models.footprint_bar import FootprintBar
+        from app.services.footprint_analyzer import cumulative_delta_divergence
+
+        env = "TESTNET" if self._settings.binance_testnet else "MAINNET"
+        lines: list[str] = [
+            f"Account Balance: ${self._settings.account_balance:,.2f}",
+            f"Today's P&L: ${daily_pnl:+.2f}",
+            f"Environment: {env}",
+            f"Symbols to analyze: {len(symbols)}",
+            "",
+            "You are trading on pure order-flow footprint evidence. For each",
+            "symbol below you see the last 15 minutes of: closing price, delta,",
+            "cumulative delta, point-of-control (POC), value-area high (VAH),",
+            "value-area low (VAL), and stacked imbalance state. No candles,",
+            "no prior signals, no historical win-rate are provided on purpose.",
+            "",
+        ]
+
+        for symbol in symbols:
+            lines.append(f"=== {symbol} ===")
+
+            result = await session.execute(
+                select(FootprintBar)
+                .where(FootprintBar.symbol == symbol)
+                .order_by(FootprintBar.ts.desc())
+                .limit(15)
+            )
+            bars = list(reversed(result.scalars().all()))
+            if not bars:
+                lines.append("FOOTPRINT: no order-flow data yet — hold.")
+                lines.append("")
+                continue
+
+            last = bars[-1]
+            closes = [float(b.close) for b in bars]
+            cds = [float(b.cum_delta) for b in bars]
+            div = cumulative_delta_divergence(closes, cds, lookback=min(len(bars), 12))
+
+            # Mini trajectory: close and delta for every bar in the window.
+            traj = " ".join(
+                f"{float(b.close):.4f}/{float(b.delta):+.0f}"
+                for b in bars
+            )
+            lines.append(f"LAST15 close/Δ : {traj}")
+            lines.append(
+                f"POC={float(last.poc):.4f}  VAH={float(last.vah):.4f}  "
+                f"VAL={float(last.val):.4f}"
+            )
+            lines.append(
+                f"Δ(1m)={float(last.delta):+.0f}  "
+                f"CumΔ={float(last.cum_delta):+.0f}  "
+                f"TotalVol={float(last.total_vol):.0f}"
+            )
+            stack_side = last.stacked_imb_side or "none"
+            lines.append(
+                f"StackedImbalance: {int(last.stacked_imb_count)} levels ({stack_side})"
+            )
+            lines.append(
+                f"Divergence(price vs cumΔ): {div if div else 'none'}"
+            )
+            lines.append("")
+
+        return "\n".join(lines)
+
+    async def _build_batch_context_legacy(
+        self, session: AsyncSession, symbols: list[str], daily_pnl: float
+    ) -> str:
+        """Legacy (candle-based) context — kept for rollback.
+
+        Not wired by default. Restore by swapping the call in
+        :meth:`run_batch` back to this method.
+        """
         from app.models.candle import Candle
 
         lines = [

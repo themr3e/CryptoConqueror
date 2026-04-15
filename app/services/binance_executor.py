@@ -823,6 +823,113 @@ class BinanceExecutor:
                     )
             return False
 
+    # ------------------------------------------------------------------
+    # Public (unsigned) market-data helpers — used by the tick ingestor
+    # ------------------------------------------------------------------
+
+    async def fetch_agg_trades(
+        self,
+        symbol: str,
+        from_id: int | None = None,
+        start_ms: int | None = None,
+        end_ms: int | None = None,
+        limit: int = 1000,
+    ) -> list[dict[str, Any]]:
+        """Fetch aggregated trades from /fapi/v1/aggTrades.
+
+        Either ``from_id`` OR (``start_ms``, ``end_ms``) should be supplied.
+        Returns the raw list Binance returns — each entry has keys
+        ``a`` (aggTradeId), ``p`` (price), ``q`` (qty), ``m`` (isBuyerMaker),
+        ``T`` (timestamp ms). Empty list on transient failure.
+        """
+        params: dict[str, Any] = {"symbol": symbol, "limit": min(limit, 1000)}
+        if from_id is not None:
+            params["fromId"] = from_id
+        else:
+            if start_ms is not None:
+                params["startTime"] = start_ms
+            if end_ms is not None:
+                params["endTime"] = end_ms
+        try:
+            data = await self._public_get("/fapi/v1/aggTrades", params)
+            if isinstance(data, list):
+                return data
+            logger.warning("BinanceExecutor: unexpected aggTrades response for {}: {}", symbol, data)
+            return []
+        except Exception:
+            logger.opt(exception=True).warning("BinanceExecutor: aggTrades fetch failed for {}", symbol)
+            return []
+
+    async def fetch_klines_1s(
+        self,
+        symbol: str,
+        start_ms: int | None = None,
+        end_ms: int | None = None,
+        limit: int = 1000,
+    ) -> list[list[Any]]:
+        """Fetch 1-second klines from /fapi/v1/klines.
+
+        Returns raw kline arrays — Binance layout:
+        ``[openTime, open, high, low, close, volume, closeTime, quoteAssetVol,
+        numTrades, takerBuyBaseVol, takerBuyQuoteVol, ignore]``.
+        """
+        params: dict[str, Any] = {
+            "symbol": symbol,
+            "interval": "1s",
+            "limit": min(limit, 1000),
+        }
+        if start_ms is not None:
+            params["startTime"] = start_ms
+        if end_ms is not None:
+            params["endTime"] = end_ms
+        try:
+            data = await self._public_get("/fapi/v1/klines", params)
+            if isinstance(data, list):
+                return data
+            logger.warning("BinanceExecutor: unexpected klines_1s response for {}: {}", symbol, data)
+            return []
+        except Exception:
+            logger.opt(exception=True).warning("BinanceExecutor: klines_1s fetch failed for {}", symbol)
+            return []
+
+    async def _public_get(
+        self,
+        path: str,
+        params: dict[str, Any],
+        _retries: int = 2,
+    ) -> Any:
+        """Unsigned public market-data GET."""
+        last_exc: Exception | None = None
+        for attempt in range(_retries + 1):
+            try:
+                async with httpx.AsyncClient(timeout=self._timeout) as client:
+                    resp = await client.get(
+                        f"{self._base_url}{path}",
+                        params=params,
+                    )
+                    if resp.status_code == 200:
+                        return resp.json()
+                    if not self._is_retryable(resp.status_code) or attempt == _retries:
+                        try:
+                            err = resp.json()
+                        except Exception:
+                            err = {"msg": resp.text}
+                        raise BinanceAPIError(
+                            f"HTTP {resp.status_code} — code={err.get('code')} msg={err.get('msg')}",
+                            code=err.get("code"),
+                        )
+                    last_exc = BinanceAPIError(f"HTTP {resp.status_code} (retrying)")
+            except (httpx.TimeoutException, httpx.ConnectError) as exc:
+                last_exc = exc
+                if attempt == _retries:
+                    raise
+            logger.warning(
+                "BinanceExecutor: public GET {} retry {}/{} after transient error",
+                path, attempt + 1, _retries,
+            )
+            await asyncio.sleep(1 * (attempt + 1))
+        raise last_exc  # unreachable
+
     async def _signed_delete(
         self,
         path: str,

@@ -11,7 +11,7 @@ Exports:
 from __future__ import annotations
 
 import asyncio
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from loguru import logger
@@ -34,6 +34,7 @@ from app.services.signal_generator import SignalGenerator
 from app.services.signal_pipeline import SignalPipeline
 from app.services.strategy_selector import StrategySelector
 from app.services.telegram_notifier import TelegramNotifier
+from app.services.tick_ingestor import TickIngestor, rollup_minute
 from app.services.walk_forward import WalkForwardValidator
 
 
@@ -48,6 +49,14 @@ _performance_tracker: PerformanceTracker | None = None
 _data_retention: DataRetentionService | None = None
 _feedback_controller: FeedbackController | None = None
 _failure_tracker: FailureTracker = FailureTracker()
+_tick_ingestor: TickIngestor | None = None
+
+
+def _get_tick_ingestor() -> TickIngestor:
+    global _tick_ingestor
+    if _tick_ingestor is None:
+        _tick_ingestor = TickIngestor(executor=_get_binance_executor())
+    return _tick_ingestor
 
 
 def _get_signal_pipeline() -> SignalPipeline:
@@ -396,6 +405,76 @@ async def job_generate_crypto_signals() -> None:
                 logger.opt(exception=True).error("[Job] generate_crypto_signals failed for {}", symbol)
 
 
+async def job_ingest_ticks() -> None:
+    """Pull the most recent order-flow data for every configured symbol.
+
+    Uses aggTrades for tick-accurate symbols (BTC/ETH/SOL) and 1-second
+    klines for the remaining list. Safe to run every minute — idempotent
+    upsert on (symbol, trade_id).
+    """
+    settings = get_settings()
+    if not settings.crypto_enabled:
+        return
+
+    logger.info("[Job] ingest_ticks started")
+    ingestor = _get_tick_ingestor()
+    symbols = settings.crypto_symbol_list
+
+    async with async_sessionmaker() as session:
+        for symbol in symbols:
+            try:
+                # 2-minute lookback ensures we don't miss the boundary when
+                # the rollup job runs for the previous minute.
+                inserted = await ingestor.ingest_symbol(
+                    session, symbol, lookback_minutes=2,
+                )
+                if inserted:
+                    logger.info(
+                        "[Job] ingest_ticks: +{} raw_trades for {}", inserted, symbol,
+                    )
+                _failure_tracker.record_success("tick_ingest")
+            except Exception:
+                logger.opt(exception=True).error(
+                    "[Job] ingest_ticks failed for {}", symbol,
+                )
+                _failure_tracker.record_failure("tick_ingest")
+
+
+async def job_rollup_footprint() -> None:
+    """Roll up the previous minute of raw_trades into footprint_bars.
+
+    Runs once per minute on a 30-second offset so that the preceding
+    minute's ticks have fully landed before we aggregate them.
+    """
+    settings = get_settings()
+    if not settings.crypto_enabled:
+        return
+
+    logger.info("[Job] rollup_footprint started")
+    symbols = settings.crypto_symbol_list
+    now = datetime.now(timezone.utc).replace(second=0, microsecond=0)
+    target_minute = now - timedelta(minutes=1)
+
+    async with async_sessionmaker() as session:
+        for symbol in symbols:
+            try:
+                bar = await rollup_minute(session, symbol, target_minute)
+                if bar is not None:
+                    logger.info(
+                        "[Job] rollup_footprint: {} @ {}  POC={}  Δ={}  stacked={}({})",
+                        symbol,
+                        target_minute.strftime("%H:%M"),
+                        bar.poc, bar.delta, bar.stacked_imb_count,
+                        bar.stacked_imb_side or "-",
+                    )
+                _failure_tracker.record_success("footprint_rollup")
+            except Exception:
+                logger.opt(exception=True).error(
+                    "[Job] rollup_footprint failed for {}", symbol,
+                )
+                _failure_tracker.record_failure("footprint_rollup")
+
+
 async def job_detect_crypto_outcomes() -> None:
     """Check active crypto signals against Binance mark price and record outcomes.
 
@@ -570,6 +649,22 @@ def register_jobs(scheduler: AsyncIOScheduler) -> None:
         minutes=2,
         id="detect_crypto_outcomes",
         name="Detect crypto signal outcomes",
+    )
+
+    # ── Order-flow / footprint jobs ───────────────────────────────────────
+    scheduler.add_job(
+        job_ingest_ticks,
+        trigger="interval",
+        minutes=1,
+        id="ingest_ticks",
+        name="Ingest tick data (aggTrades + 1s klines)",
+    )
+    scheduler.add_job(
+        job_rollup_footprint,
+        trigger="cron",
+        second=30,
+        id="rollup_footprint",
+        name="Roll up previous minute into footprint_bars",
     )
 
     # Claude autonomous agent (every 30 minutes when enabled)

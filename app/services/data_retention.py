@@ -19,6 +19,8 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.backtest_result import BacktestResult
 from app.models.candle import Candle
+from app.models.footprint_bar import FootprintBar
+from app.models.raw_trade import RawTrade
 
 
 class DataRetentionService:
@@ -29,6 +31,8 @@ class DataRetentionService:
         "H1": 365,
     }
     BACKTEST_RETENTION_DAYS: int = 180
+    RAW_TRADES_RETENTION_DAYS: int = 7
+    FOOTPRINT_BARS_RETENTION_DAYS: int = 7
 
     async def run(self, session: AsyncSession) -> dict[str, int]:
         """Execute retention policies and return deletion counts."""
@@ -62,6 +66,28 @@ class DataRetentionService:
             "data_retention: pruned {count} backtest results older than {days}d",
             count=result.rowcount,
             days=self.BACKTEST_RETENTION_DAYS,
+        )
+
+        raw_cutoff = now - timedelta(days=self.RAW_TRADES_RETENTION_DAYS)
+        result = await session.execute(
+            delete(RawTrade).where(RawTrade.ts < raw_cutoff)
+        )
+        results["raw_trades"] = result.rowcount
+        logger.info(
+            "data_retention: pruned {count} raw_trades older than {days}d",
+            count=result.rowcount,
+            days=self.RAW_TRADES_RETENTION_DAYS,
+        )
+
+        fp_cutoff = now - timedelta(days=self.FOOTPRINT_BARS_RETENTION_DAYS)
+        result = await session.execute(
+            delete(FootprintBar).where(FootprintBar.ts < fp_cutoff)
+        )
+        results["footprint_bars"] = result.rowcount
+        logger.info(
+            "data_retention: pruned {count} footprint_bars older than {days}d",
+            count=result.rowcount,
+            days=self.FOOTPRINT_BARS_RETENTION_DAYS,
         )
 
         await session.commit()

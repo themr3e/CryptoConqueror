@@ -29,10 +29,10 @@ from app.models.signal import Signal
 from app.services.telegram_notifier import TelegramNotifier
 
 
-_SYSTEM_PROMPT = """You are an expert Binance Futures trader managing a live trading account.
-Your goal is to generate consistent profit while strictly managing risk.
+_SYSTEM_PROMPT = """You are an expert Binance Futures trader applying the SLC (Structure + Level + Confirmation) methodology.
+Your goal is to generate high-probability trades by waiting for all three conditions to align.
 
-You will receive market data for MULTIPLE symbols at once.
+You will receive market data for MULTIPLE symbols at once, including H4/H1/M15 candles and structure labels.
 
 You must respond with a JSON ARRAY ONLY — one object per symbol, no explanation outside the JSON.
 
@@ -50,15 +50,41 @@ Response format:
   ...
 ]
 
-Rules:
+SLC Trading Rules — you MUST apply all three steps before entering:
+
+STEP 1 — STRUCTURE (trend filter):
+- Use the [STRUCTURE H4] label as your primary trend direction.
+- Only take LONG trades when H4 structure is "uptrend".
+- Only take SHORT trades when H4 structure is "downtrend".
+- If H4 structure is "sideways" → set action to "hold" for that symbol. No exceptions.
+- H1 structure should confirm H4 direction; if they conflict, use "hold".
+
+STEP 2 — LEVEL (key zone):
+- Identify at least one key level: Order Block (OB), Fair Value Gap (FVG), or Supply/Demand zone.
+- An Order Block is the last opposing candle before an impulsive move away.
+- A Fair Value Gap is an imbalance (gap) left by a strong impulse — price should return to fill it.
+- Only trade when price is currently at or entering such a level.
+- If no valid level is present, use "hold".
+
+STEP 3 — CONFIRMATION (entry trigger):
+- Wait for the FIRST pullback into the level — do not chase second or third entries.
+- Look for a rejection candle at the level: pin bar, engulfing, or strong wick rejecting the zone.
+- Entry should be at or near the current close after rejection is visible.
+- Stop loss goes below the OB/FVG zone (long) or above it (short), with a small buffer.
+- Take profit targets the next significant level or a minimum 2:1 RR from entry.
+
+Confidence and execution thresholds:
+- Confidence 80+: all three conditions perfectly aligned, strong momentum.
+- Confidence 65-79: conditions aligned but one factor is marginal.
+- Confidence below 65: do NOT open a trade — use "hold" instead.
+- Minimum RR must be 1.5:1. Reject any setup with tighter risk/reward.
+
+Additional rules:
 - Return exactly one object per symbol provided — same order as input
-- Use "hold" when conditions are unclear or risky
-- Always set stop_loss and take_profit for open_long/open_short
+- Always set stop_loss and take_profit for open_long/open_short actions
 - stop_loss must be at least 1.5% from entry
-- take_profit must give minimum 1.5:1 risk/reward ratio
-- Consider H4 and H1 trends before entering
-- Avoid trading against the dominant trend
 - If daily loss limit is near, prefer "hold" for all symbols
+- No trading in ranging or sideways markets — patience is the edge
 
 """
 
@@ -260,7 +286,7 @@ class ClaudeTradeAgent:
                 symbol, action, int(confidence), reasoning[:60],
             )
 
-            if action in ("open_long", "open_short") and entry_price and stop_loss and take_profit:
+            if action in ("open_long", "open_short") and entry_price and stop_loss and take_profit and confidence >= 65:
                 executed, error = await self._execute(session, decision, symbol)
                 decision.executed = executed
                 decision.execution_error = error
@@ -283,7 +309,9 @@ class ClaudeTradeAgent:
         self, session: AsyncSession, symbols: list[str], daily_pnl: float
     ) -> str:
         """Build combined market context for all symbols."""
+        import pandas as pd
         from app.models.candle import Candle
+        from app.strategies.helpers.market_structure import detect_higher_highs_higher_lows
 
         lines = [
             f"Account Balance: ${self._settings.account_balance:,.2f}",
@@ -296,18 +324,46 @@ class ClaudeTradeAgent:
         for symbol in symbols:
             lines.append(f"=== {symbol} ===")
 
+            h1_candles_raw = []
+            h4_candles_raw = []
+
             for tf in ["H1", "H4"]:
                 result = await session.execute(
                     select(Candle)
                     .where(Candle.symbol == symbol, Candle.timeframe == tf)
                     .order_by(Candle.timestamp.desc())
-                    .limit(5)
+                    .limit(20)
                 )
                 candles = list(reversed(result.scalars().all()))
                 if candles:
                     lines.append(f"[{tf}] " + " | ".join(
                         f"{float(c.close):.4f}" for c in candles
                     ) + " (latest close)")
+                    if tf == "H1":
+                        h1_candles_raw = candles
+                    else:
+                        h4_candles_raw = candles
+
+            # Structure detection using HH/HL analysis
+            for tf_label, raw in [("H1", h1_candles_raw), ("H4", h4_candles_raw)]:
+                if len(raw) >= 10:
+                    highs = pd.Series([float(c.high) for c in raw])
+                    lows  = pd.Series([float(c.low)  for c in raw])
+                    structure = detect_higher_highs_higher_lows(highs, lows, lookback=min(20, len(raw)))
+                    lines.append(f"[STRUCTURE {tf_label}] {structure}")
+
+            # M15 candles (last 10)
+            m15_result = await session.execute(
+                select(Candle)
+                .where(Candle.symbol == symbol, Candle.timeframe == "M15")
+                .order_by(Candle.timestamp.desc())
+                .limit(10)
+            )
+            m15_candles = list(reversed(m15_result.scalars().all()))
+            if m15_candles:
+                lines.append(f"[M15] " + " | ".join(
+                    f"{float(c.close):.4f}" for c in m15_candles
+                ) + " (latest close)")
 
             open_result = await session.execute(
                 select(Signal).where(Signal.symbol == symbol, Signal.status == "active")
@@ -343,7 +399,7 @@ class ClaudeTradeAgent:
         """Send batch context to Claude and parse the JSON array response."""
         try:
             message = await self._client.messages.create(
-                model="claude-haiku-4-5-20251001",
+                model="claude-sonnet-4-6",
                 max_tokens=4096,
                 system=_SYSTEM_PROMPT,
                 messages=[{"role": "user", "content": context}],

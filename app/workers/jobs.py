@@ -33,6 +33,9 @@ from app.services.claude_trade_agent import ClaudeTradeAgent
 from app.services.signal_generator import SignalGenerator
 from app.services.signal_pipeline import SignalPipeline
 from app.services.strategy_selector import StrategySelector
+from app.services.self_improver import SelfImprover
+from app.services.strategy_researcher import StrategyResearcher
+from app.services.telegram_commander import TelegramCommander
 from app.services.telegram_notifier import TelegramNotifier
 from app.services.walk_forward import WalkForwardValidator
 
@@ -283,37 +286,148 @@ async def job_data_retention() -> None:
             logger.opt(exception=True).error("[Job] data_retention failed")
 
 
-async def job_send_health_digest() -> None:
-    """Send daily health digest via Telegram."""
-    logger.info("[Job] health_digest started")
+async def job_send_daily_report() -> None:
+    """Send a full daily trading report via Telegram at 08:00 UTC."""
+    logger.info("[Job] daily_report started")
     _s = get_settings()
     notifier = TelegramNotifier(bot_token=_s.telegram_bot_token or "", chat_id=_s.telegram_chat_id or "")
+
     async with async_sessionmaker() as session:
         try:
-            from sqlalchemy import select, func, and_
+            from sqlalchemy import select, func
             from app.models.signal import Signal
             from app.models.outcome import Outcome
+            from app.models.claude_decision import ClaudeDecision
             from datetime import timedelta
 
-            now = datetime.now(timezone.utc)
-            since = now - timedelta(hours=24)
+            now   = datetime.now(timezone.utc)
+            today = now.replace(hour=0, minute=0, second=0, microsecond=0)
 
-            sig_count = await session.scalar(
-                select(func.count()).select_from(Signal)
-                .where(Signal.created_at >= since)
-            ) or 0
+            # ── Today's outcomes ────────────────────────────────────────────
+            outcomes_result = await session.execute(
+                select(Outcome, Signal.symbol, Signal.direction)
+                .join(Signal, Outcome.signal_id == Signal.id)
+                .where(Outcome.created_at >= today)
+                .order_by(Outcome.pnl_usdt.desc())
+            )
+            rows = outcomes_result.all()
 
-            outcome_count = await session.scalar(
-                select(func.count()).select_from(Outcome)
-                .where(Outcome.created_at >= since)
-            ) or 0
+            total_trades  = len(rows)
+            wins          = sum(1 for r in rows if r[0].result in ("tp1_hit", "tp2_hit"))
+            losses        = total_trades - wins
+            total_pnl     = sum(float(r[0].pnl_usdt or 0) for r in rows)
+            win_rate      = (wins / total_trades * 100) if total_trades else 0
 
-            await notifier.notify_health_digest(stats={
-                "active_signals": sig_count,
-                "outcomes_today": outcome_count,
-            })
+            best_trade  = rows[0]  if rows else None
+            worst_trade = rows[-1] if rows else None
+
+            # ── Open positions ───────────────────────────────────────────────
+            open_result = await session.execute(
+                select(Signal).where(Signal.status == "active")
+            )
+            open_signals = open_result.scalars().all()
+
+            # ── 7-day win rate ───────────────────────────────────────────────
+            week_ago = now - timedelta(days=7)
+            week_result = await session.execute(
+                select(Outcome).where(Outcome.created_at >= week_ago)
+            )
+            week_outcomes = week_result.scalars().all()
+            wins_7d  = sum(1 for o in week_outcomes if o.result in ("tp1_hit", "tp2_hit"))
+            total_7d = len(week_outcomes)
+            wr_7d    = f"{wins_7d}/{total_7d} ({wins_7d/total_7d*100:.0f}%)" if total_7d else "no data"
+            pnl_7d   = sum(float(o.pnl_usdt or 0) for o in week_outcomes)
+
+            # ── Latest self-improvement insight ──────────────────────────────
+            improver = SelfImprover()
+            insight  = await improver.get_latest_insight(session)
+
+            # ── Build message ────────────────────────────────────────────────
+            pnl_emoji = "📈" if total_pnl >= 0 else "📉"
+            lines = [
+                f"{pnl_emoji} <b>Daily Report — {now.strftime('%Y-%m-%d')}</b>",
+                "",
+                f"<b>Trades today:</b> {total_trades} ({wins}W / {losses}L)",
+                f"<b>Win rate today:</b> {win_rate:.0f}%",
+                f"<b>Today's P&amp;L:</b> ${total_pnl:+.2f}",
+                "",
+                f"<b>7-day win rate:</b> {wr_7d}",
+                f"<b>7-day P&amp;L:</b> ${pnl_7d:+.2f}",
+                "",
+            ]
+
+            if best_trade and float(best_trade[0].pnl_usdt or 0) > 0:
+                lines.append(
+                    f"🏆 <b>Best trade:</b> {best_trade[1]} {best_trade[2]} "
+                    f"→ ${float(best_trade[0].pnl_usdt):+.2f}"
+                )
+            if worst_trade and float(worst_trade[0].pnl_usdt or 0) < 0:
+                lines.append(
+                    f"💀 <b>Worst trade:</b> {worst_trade[1]} {worst_trade[2]} "
+                    f"→ ${float(worst_trade[0].pnl_usdt):+.2f}"
+                )
+
+            if open_signals:
+                lines.append("")
+                lines.append(f"<b>Open positions:</b> {len(open_signals)}")
+                for s in open_signals[:3]:
+                    lines.append(
+                        f"  {'📈' if s.direction == 'BUY' else '📉'} {s.symbol} "
+                        f"@ {float(s.entry_price):.4f}"
+                    )
+
+            if insight:
+                lines.append("")
+                # Extract just the summary line from insight block
+                for line in insight.split("\n"):
+                    if "Summary:" in line or "✏️" in line or "⛔" in line or "🎯" in line:
+                        lines.append(line.strip())
+
+            lines.append("")
+            lines.append("Send /status for live snapshot anytime.")
+
+            await notifier._send_message("\n".join(lines))
+            logger.info("[Job] daily_report sent — {} trades, ${:+.2f} P&L", total_trades, total_pnl)
+
         except Exception:
-            logger.opt(exception=True).error("[Job] health_digest failed")
+            logger.opt(exception=True).error("[Job] daily_report failed")
+
+
+async def job_strategy_research() -> None:
+    """Weekly autonomous strategy R&D cycle.
+
+    Claude reviews recent trade history, proposes a new strategy,
+    runs a blind walk-forward backtest, and either auto-integrates
+    (win rate >= 75%) or notifies the operator for approval.
+    """
+    settings = get_settings()
+    if not settings.anthropic_api_key:
+        return
+
+    logger.info("[Job] strategy_research started")
+    _s = get_settings()
+    notifier = TelegramNotifier(bot_token=_s.telegram_bot_token or "", chat_id=_s.telegram_chat_id or "")
+
+    async with async_sessionmaker() as session:
+        try:
+            researcher = StrategyResearcher()
+            summary = await researcher.run(session)
+            await notifier._send_message(f"🔬 <b>Weekly Strategy Research</b>\n\n{summary}")
+            logger.info("[Job] strategy_research complete")
+        except Exception:
+            logger.opt(exception=True).error("[Job] strategy_research failed")
+
+
+async def job_self_improve() -> None:
+    """Trigger self-improvement analysis after every 10 closed trades."""
+    async with async_sessionmaker() as session:
+        try:
+            improver = SelfImprover()
+            ran = await improver.maybe_analyze(session)
+            if ran:
+                logger.info("[Job] self_improve: analysis completed")
+        except Exception:
+            logger.opt(exception=True).error("[Job] self_improve failed")
 
 
 # ---------------------------------------------------------------------------
@@ -332,7 +446,7 @@ async def job_fetch_crypto_candles() -> None:
 
     async with async_sessionmaker() as session:
         for symbol in symbols:
-            for tf in ["M15", "H1", "H4", "D1"]:
+            for tf in ["M15", "M30", "H1", "H4", "D1"]:
                 try:
                     stored = await ingestor.fetch_and_store(session, symbol, tf)
                     logger.info("[Job] fetch_crypto_candles: {} {} {} candles stored", stored, symbol, tf)
@@ -461,6 +575,22 @@ async def job_detect_crypto_outcomes() -> None:
             logger.opt(exception=True).error("[Job] detect_crypto_outcomes failed")
 
 
+async def job_iceberg_watchdog() -> None:
+    """Restart any iceberg scanner threads that crashed."""
+    from app.services.iceberg_monitor import iceberg_monitor
+    iceberg_monitor.check_threads()
+
+
+async def job_telegram_commander() -> None:
+    """Poll Telegram for incoming commands every 15 seconds."""
+    commander = TelegramCommander()
+    async with async_sessionmaker() as session:
+        try:
+            await commander.poll_and_handle(session)
+        except Exception:
+            logger.opt(exception=True).error("[Job] telegram_commander failed")
+
+
 async def job_claude_agent() -> list:
     """Run Claude autonomous trading agent for all crypto symbols."""
     settings = get_settings()
@@ -541,12 +671,12 @@ def register_jobs(scheduler: AsyncIOScheduler) -> None:
         name="Data retention cleanup",
     )
     scheduler.add_job(
-        job_send_health_digest,
+        job_send_daily_report,
         trigger="cron",
         hour=8,
         minute=0,
-        id="health_digest",
-        name="Send health digest",
+        id="daily_report",
+        name="Send full daily trading report",
     )
 
     # ── Crypto jobs (no-op when CRYPTO_ENABLED=false) ─────────────────────
@@ -572,11 +702,49 @@ def register_jobs(scheduler: AsyncIOScheduler) -> None:
         name="Detect crypto signal outcomes",
     )
 
-    # Claude autonomous agent (every 30 minutes when enabled)
+    # Weekly strategy research (every Sunday at 03:00 UTC)
+    scheduler.add_job(
+        job_strategy_research,
+        trigger="cron",
+        day_of_week="sun",
+        hour=3,
+        minute=0,
+        id="strategy_research",
+        name="Weekly autonomous strategy R&D",
+    )
+
+    # Self-improvement loop (runs every 2 min, triggers analysis every 10th trade)
+    scheduler.add_job(
+        job_self_improve,
+        trigger="interval",
+        minutes=2,
+        id="self_improve",
+        name="Self-improvement analysis",
+    )
+
+    # Iceberg monitor watchdog — restarts crashed scanner threads (every 5 min)
+    scheduler.add_job(
+        job_iceberg_watchdog,
+        trigger="interval",
+        minutes=5,
+        id="iceberg_watchdog",
+        name="Iceberg scanner thread watchdog",
+    )
+
+    # Telegram two-way command interface (every 15 seconds)
+    scheduler.add_job(
+        job_telegram_commander,
+        trigger="interval",
+        seconds=15,
+        id="telegram_commander",
+        name="Telegram command handler",
+    )
+
+    # Claude autonomous agent (every 15 minutes — aligned with M15 candle close)
     scheduler.add_job(
         job_claude_agent,
         trigger="interval",
-        minutes=30,
+        minutes=15,
         id="claude_agent",
         name="Claude autonomous trading agent",
     )

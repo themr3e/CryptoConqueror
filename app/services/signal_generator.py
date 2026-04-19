@@ -18,7 +18,7 @@ from app.models.signal import Signal
 # Configuration constants
 # ---------------------------------------------------------------------------
 
-MIN_RR: float = 1.3
+MIN_RR: float = 0.5        # lowered — per-coin strategies are pre-validated (ZEC=0.7, BTC=1.3)
 MIN_CONFIDENCE: float = 40.0
 MAX_SL_PIPS: float = 800.0
 PIP_VALUE: float = 0.10

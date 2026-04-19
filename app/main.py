@@ -20,6 +20,7 @@ from app.api.dashboard import router as dashboard_router
 from app.api.health import router as health_router
 from app.api.settings import router as settings_router
 from app.api.status import router as status_router
+from app.api.webhook import router as webhook_router
 
 async def bootstrap_data() -> None:
     """Seed strategies and backfill crypto candles on first deploy."""
@@ -120,6 +121,10 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     register_jobs(scheduler)
     scheduler.start()
 
+    # Start iceberg monitor background threads (one per coin, daemon threads)
+    from app.services.iceberg_monitor import iceberg_monitor
+    iceberg_monitor.start(get_settings().crypto_symbol_list)
+
     # Run bootstrap in the background — does NOT block server startup
     async def _bootstrap_safe() -> None:
         try:
@@ -134,6 +139,8 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     yield
 
     # Graceful shutdown
+    from app.services.iceberg_monitor import iceberg_monitor
+    iceberg_monitor.stop()
     scheduler.shutdown(wait=False)
     await engine.dispose()
     logger.info("QuantLive application stopped")
@@ -151,3 +158,4 @@ app.include_router(candles_router)
 app.include_router(chart_router)
 app.include_router(dashboard_router)
 app.include_router(settings_router)
+app.include_router(webhook_router)

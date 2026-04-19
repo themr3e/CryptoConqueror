@@ -124,9 +124,11 @@ def _confidence(rsi_val: float, direction: str, hist_strength: int, div_sharpnes
 # ── Base MACD Reversal ────────────────────────────────────────────────────────
 
 class _MACDReversalBase(BaseStrategy):
-    """MACD divergence reversal — base class for per-coin variants."""
+    """MACD divergence reversal — base class for per-coin variants.
+    NAME intentionally blank so this class is NOT auto-registered as a tradable strategy.
+    """
 
-    NAME = "_macd_reversal_base"   # overridden by each coin subclass
+    NAME = ""   # empty → skipped by __init_subclass__ registry
     ASSET_CLASS = "crypto_futures"
 
     DEFAULT_PARAMS: dict[str, float] = {

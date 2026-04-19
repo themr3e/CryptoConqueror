@@ -6,7 +6,7 @@ into the shared ``candles`` table with ``source="binance_futures"``.
 No API key is required for public market data endpoints.
 
 Supported timeframes (mapped to Binance interval strings):
-    M15 → 15m,  H1 → 1h,  H4 → 4h,  D1 → 1d
+    M15 → 15m,  M30 → 30m,  H1 → 1h,  H4 → 4h,  D1 → 1d
 """
 
 from __future__ import annotations
@@ -29,6 +29,7 @@ _BASE_URL = "https://fapi.binance.com/fapi/v1"
 
 _INTERVAL_MAP: dict[str, str] = {
     "M15": "15m",
+    "M30": "30m",
     "H1": "1h",
     "H4": "4h",
     "D1": "1d",

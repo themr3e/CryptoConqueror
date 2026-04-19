@@ -92,6 +92,7 @@ _LOT_SIZE_DEFAULTS: dict[str, Decimal] = {
     "JUPUSDT":    Decimal("1"),
     "PYTHUSDT":   Decimal("1"),
     "MATICUSDT":  Decimal("1"),
+    "ZECUSDT":    Decimal("0.001"),
 }
 
 _TICK_SIZE_DEFAULTS: dict[str, Decimal] = {
@@ -127,6 +128,7 @@ _TICK_SIZE_DEFAULTS: dict[str, Decimal] = {
     "JUPUSDT":    Decimal("0.0001"),
     "PYTHUSDT":   Decimal("0.0001"),
     "MATICUSDT":  Decimal("0.0001"),
+    "ZECUSDT":    Decimal("0.01"),
 }
 
 
@@ -330,25 +332,58 @@ class BinanceExecutor:
     ) -> OrderResult:
         """Place the STOP_MARKET stop-loss order.
 
-        Uses closePosition=true so the entire position is closed when
-        the stop price is hit. This form is required on Binance Futures
-        Demo (demo-fapi.binance.com) — using quantity+reduceOnly triggers
-        error -4120 on that environment.
+        Tries three strategies in order to work across both demo-fapi and
+        mainnet, which differ in which parameter combinations accept -4120:
+
+          1. closePosition=true + workingType=CONTRACT_PRICE  (preferred)
+          2. quantity + reduceOnly=true + workingType=CONTRACT_PRICE
+          3. Return a graceful ERROR result — outcome detector handles closure
+             via price-level monitoring when Binance rejects all variants.
         """
         side = "SELL" if signal.direction == "BUY" else "BUY"
         stop_price = _round_price(signal.stop_loss, signal.symbol)
+        qty_str = str(_round_quantity(quantity, signal.symbol))
 
-        params = {
-            "symbol":        signal.symbol,
-            "side":          side,
-            "type":          "STOP_MARKET",
-            "stopPrice":     str(stop_price),
-            "closePosition": "true",
-        }
+        attempts = [
+            {
+                "symbol":        signal.symbol,
+                "side":          side,
+                "type":          "STOP_MARKET",
+                "stopPrice":     str(stop_price),
+                "closePosition": "true",
+                "workingType":   "CONTRACT_PRICE",
+            },
+            {
+                "symbol":      signal.symbol,
+                "side":        side,
+                "type":        "STOP_MARKET",
+                "stopPrice":   str(stop_price),
+                "quantity":    qty_str,
+                "reduceOnly":  "true",
+                "workingType": "CONTRACT_PRICE",
+            },
+        ]
 
-        return await self._place_and_record(
-            session, signal, params, order_role="stop_loss"
+        for params in attempts:
+            result = await self._place_and_record(
+                session, signal, params, order_role="stop_loss"
+            )
+            if result.success:
+                return result
+            code = self._extract_code(result.error_message)
+            if code != -4120:
+                return result   # non-retryable error
+            logger.warning(
+                "BinanceExecutor: SL attempt failed with -4120 for {} — trying next strategy",
+                signal.symbol,
+            )
+
+        logger.warning(
+            "BinanceExecutor: all SL strategies failed for {} — "
+            "outcome detector will manage closure via price-level monitoring",
+            signal.symbol,
         )
+        return result  # type: ignore[return-value]  # last attempt's result
 
     async def _place_take_profit(
         self,
@@ -356,25 +391,54 @@ class BinanceExecutor:
         signal: Signal,
         quantity: Decimal,
     ) -> OrderResult:
-        """Place the TAKE_PROFIT_MARKET take-profit-1 order.
+        """Place the TAKE_PROFIT_MARKET take-profit order.
 
-        Uses closePosition=true for the same reason as _place_stop_loss —
-        required on Binance Futures Demo to avoid -4120.
+        Same three-strategy fallback chain as _place_stop_loss.
         """
         side = "SELL" if signal.direction == "BUY" else "BUY"
         tp_price = _round_price(signal.take_profit_1, signal.symbol)
+        qty_str = str(_round_quantity(quantity, signal.symbol))
 
-        params = {
-            "symbol":        signal.symbol,
-            "side":          side,
-            "type":          "TAKE_PROFIT_MARKET",
-            "stopPrice":     str(tp_price),
-            "closePosition": "true",
-        }
+        attempts = [
+            {
+                "symbol":        signal.symbol,
+                "side":          side,
+                "type":          "TAKE_PROFIT_MARKET",
+                "stopPrice":     str(tp_price),
+                "closePosition": "true",
+                "workingType":   "CONTRACT_PRICE",
+            },
+            {
+                "symbol":      signal.symbol,
+                "side":        side,
+                "type":        "TAKE_PROFIT_MARKET",
+                "stopPrice":   str(tp_price),
+                "quantity":    qty_str,
+                "reduceOnly":  "true",
+                "workingType": "CONTRACT_PRICE",
+            },
+        ]
 
-        return await self._place_and_record(
-            session, signal, params, order_role="take_profit_1"
+        for params in attempts:
+            result = await self._place_and_record(
+                session, signal, params, order_role="take_profit_1"
+            )
+            if result.success:
+                return result
+            code = self._extract_code(result.error_message)
+            if code != -4120:
+                return result
+            logger.warning(
+                "BinanceExecutor: TP attempt failed with -4120 for {} — trying next strategy",
+                signal.symbol,
+            )
+
+        logger.warning(
+            "BinanceExecutor: all TP strategies failed for {} — "
+            "outcome detector will manage closure via price-level monitoring",
+            signal.symbol,
         )
+        return result  # type: ignore[return-value]
 
     async def _place_and_record(
         self,
@@ -482,34 +546,49 @@ class BinanceExecutor:
             return False
 
     def _calculate_quantity(self, signal: Signal) -> Decimal:
-        """Calculate position size in base currency.
+        """Calculate position size based on confidence-tiered notional (USDT).
 
-        Uses account_balance * 1% risk / (entry - SL) * leverage.
+        Confidence tiers (set via Railway env vars):
+            >= TRADE_SIZE_HIGH_CONFIDENCE (75) → TRADE_SIZE_HIGH   ($1000)
+            >= TRADE_SIZE_MID_CONFIDENCE  (65) → TRADE_SIZE_MID    ($500)
+            >= TRADE_SIZE_LOW_CONFIDENCE  (50) → TRADE_SIZE_MID_LOW ($250)
+            <  50                              → TRADE_SIZE_LOW     ($100)
+
+        Quantity = notional_usdt / entry_price
+        (Leverage is applied by Binance automatically — we size by USDT value)
         """
         settings = get_settings()
-        account_balance = Decimal(str(settings.account_balance))
-        risk_pct = Decimal("0.01")  # 1% risk per trade
+        confidence = float(signal.confidence or 0)
+
+        # Confidence thresholds (with env var overrides)
+        high_conf  = float(getattr(settings, "trade_size_high_confidence", 75))
+        mid_conf   = float(getattr(settings, "trade_size_mid_confidence",  65))
+        low_conf   = float(getattr(settings, "trade_size_low_confidence",  50))
+
+        # Notional USDT per tier (with env var overrides)
+        high_usdt    = Decimal(str(getattr(settings, "trade_size_high",    1000)))
+        mid_usdt     = Decimal(str(getattr(settings, "trade_size_mid",      500)))
+        mid_low_usdt = Decimal(str(getattr(settings, "trade_size_mid_low",  250)))
+        low_usdt     = Decimal(str(getattr(settings, "trade_size_low",      100)))
+
+        if confidence >= high_conf:
+            notional = high_usdt
+        elif confidence >= mid_conf:
+            notional = mid_usdt
+        elif confidence >= low_conf:
+            notional = mid_low_usdt
+        else:
+            notional = low_usdt
 
         entry = signal.entry_price
-        sl = signal.stop_loss
-        price_risk = abs(entry - sl)
-
-        if price_risk == 0:
+        if entry <= 0:
             return Decimal("0")
 
-        # Quantity = risk_amount / SL_distance (dollar risk divided by loss per unit)
-        # Leverage reduces margin needed but does NOT change the number of units
-        # needed to risk exactly risk_pct of account balance.
-        risk_amount = account_balance * risk_pct
-        quantity = risk_amount / price_risk
-
-        # Cap notional value to avoid oversized positions
-        # Hard cap: 5% of account OR $500, whichever is smaller
-        max_notional = min(account_balance * Decimal("0.05"), Decimal("500"))
-        notional = quantity * entry
-        if notional > max_notional:
-            quantity = max_notional / entry
-
+        quantity = notional / entry
+        logger.info(
+            "[BinanceExecutor] sizing {} conf={:.0f}% → notional=${} qty={}",
+            signal.symbol, confidence, notional, _round_quantity(quantity, signal.symbol),
+        )
         return _round_quantity(quantity, signal.symbol)
 
     # ------------------------------------------------------------------
@@ -530,6 +609,20 @@ class BinanceExecutor:
 
     def _headers(self) -> dict[str, str]:
         return {"X-MBX-APIKEY": self._api_key}
+
+    @staticmethod
+    def _extract_code(error_message: str | None) -> int | None:
+        """Parse Binance error code from an error message string like 'HTTP 400 — code=-4120 msg=...'"""
+        if not error_message:
+            return None
+        try:
+            for part in error_message.split("—"):
+                part = part.strip()
+                if part.startswith("code="):
+                    return int(part.split("=", 1)[1].split()[0])
+        except (ValueError, IndexError):
+            pass
+        return None
 
     @staticmethod
     def _is_retryable(status_code: int) -> bool:
@@ -748,6 +841,7 @@ class BinanceExecutor:
             "type":          "STOP_MARKET",
             "stopPrice":     str(rounded_new),
             "closePosition": "true",
+            "workingType":   "CONTRACT_PRICE",
         }
         try:
             raw = await self._signed_post("/fapi/v1/order", new_params)
@@ -795,6 +889,7 @@ class BinanceExecutor:
                         "type":          "STOP_MARKET",
                         "stopPrice":     str(original_sl),
                         "closePosition": "true",
+                        "workingType":   "CONTRACT_PRICE",
                     }
                     raw_r = await self._signed_post("/fapi/v1/order", restore_params)
                     session.add(TradeOrder(

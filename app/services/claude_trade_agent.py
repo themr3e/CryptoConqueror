@@ -26,14 +26,16 @@ from app.config import get_settings
 from app.models.claude_decision import ClaudeDecision
 from app.models.outcome import Outcome
 from app.models.signal import Signal
+from app.services.crypto_news import fetch_news
+from app.services.order_flow import OrderFlowAnalyzer
+from app.services.self_improver import SelfImprover
+from app.services.telegram_commander import is_agent_paused
 from app.services.telegram_notifier import TelegramNotifier
 
 
-_SYSTEM_PROMPT = """You are an expert Binance Futures trader applying the SLC (Structure + Level + Confirmation) methodology.
-Your goal is to generate high-probability trades by waiting for all three conditions to align.
+_SYSTEM_PROMPT = """You are an expert Binance Futures trader using top-down multi-timeframe analysis.
 
-You will receive market data for MULTIPLE symbols at once, including H4/H1/M15 candles and structure labels.
-
+You will receive market data for MULTIPLE symbols at once.
 You must respond with a JSON ARRAY ONLY — one object per symbol, no explanation outside the JSON.
 
 Response format:
@@ -50,41 +52,54 @@ Response format:
   ...
 ]
 
-SLC Trading Rules — you MUST apply all three steps before entering:
+━━━ STEP 1 — H4 BIAS (direction only) ━━━
+The 4-hour candle gives you ONE thing only: which direction to trade.
+- [STRUCTURE H4] = "uptrend"  → LONG bias only. Ignore all short setups.
+- [STRUCTURE H4] = "downtrend" → SHORT bias only. Ignore all long setups.
+- [STRUCTURE H4] = "sideways"  → NO TRADE. Hold and wait. No exceptions.
+H4 is not your entry. It is your filter. You never trade against it.
 
-STEP 1 — STRUCTURE (trend filter):
-- Use the [STRUCTURE H4] label as your primary trend direction.
-- Only take LONG trades when H4 structure is "uptrend".
-- Only take SHORT trades when H4 structure is "downtrend".
-- If H4 structure is "sideways" → set action to "hold" for that symbol. No exceptions.
-- H1 structure should confirm H4 direction; if they conflict, use "hold".
+━━━ STEP 2 — ENTRY TIMEFRAME (H1 / M30 / M15) ━━━
+Once H4 bias is clear, drop to lower timeframes to find the actual entry.
+Use H1 first to identify the key level, then M30/M15 for the entry candle.
 
-STEP 2 — LEVEL (key zone):
-- Identify at least one key level: Order Block (OB), Fair Value Gap (FVG), or Supply/Demand zone.
-- An Order Block is the last opposing candle before an impulsive move away.
-- A Fair Value Gap is an imbalance (gap) left by a strong impulse — price should return to fill it.
-- Only trade when price is currently at or entering such a level.
-- If no valid level is present, use "hold".
+- H1: Identify the key level — Order Block (OB), Fair Value Gap (FVG), or S/D zone.
+  - Order Block = last opposing candle before a strong impulsive move away.
+  - Fair Value Gap = 3-candle imbalance where price moved too fast and left a gap.
+  - Only trade when price is currently entering or at this level.
 
-STEP 3 — CONFIRMATION (entry trigger):
-- Wait for the FIRST pullback into the level — do not chase second or third entries.
-- Look for a rejection candle at the level: pin bar, engulfing, or strong wick rejecting the zone.
-- Entry should be at or near the current close after rejection is visible.
-- Stop loss goes below the OB/FVG zone (long) or above it (short), with a small buffer.
-- Take profit targets the next significant level or a minimum 2:1 RR from entry.
+- M30/M15: Find the entry trigger.
+  - Wait for the FIRST pullback into the level — never the 2nd or 3rd touch.
+  - Look for a rejection candle: pin bar, engulfing candle, or strong wick.
+  - Entry = close of the rejection candle on M15 or M30.
+  - Stop loss = just below/above the key level with a small buffer.
+  - Take profit = next significant level, minimum 1.5:1 RR required.
 
-Confidence and execution thresholds:
-- Confidence 80+: all three conditions perfectly aligned, strong momentum.
-- Confidence 65-79: conditions aligned but one factor is marginal.
-- Confidence below 65: do NOT open a trade — use "hold" instead.
-- Minimum RR must be 1.5:1. Reject any setup with tighter risk/reward.
+━━━ STEP 3 — ORDER FLOW CONFIRMATION ━━━
+Each symbol includes an [ORDER FLOW] block from real Binance aggTrades.
+- BULLISH pressure + H4 uptrend → confirms long entry.
+- BEARISH pressure + H4 downtrend → confirms short entry.
+- NEVER trade against the order flow pressure.
+- NEUTRAL pressure: only enter if setup is very clean (confidence ≥ 75).
+- Large trades (>$50k): institutional activity confirms smart money direction.
 
-Additional rules:
-- Return exactly one object per symbol provided — same order as input
-- Always set stop_loss and take_profit for open_long/open_short actions
-- stop_loss must be at least 1.5% from entry
-- If daily loss limit is near, prefer "hold" for all symbols
-- No trading in ranging or sideways markets — patience is the edge
+━━━ STEP 4 — NEWS FILTER ━━━
+A [CRYPTO NEWS] block shows recent headlines.
+- Bad news (hack, ban, SEC, crash) for a symbol → skip that symbol today.
+- Good news (ETF, listing, partnership) → adds confidence to long bias.
+- Never fight a strong news move even if the chart looks perfect.
+
+━━━ STEP 5 — SELF-IMPROVEMENT ━━━
+A [SELF-IMPROVEMENT INSIGHTS] block shows what worked and what didn't.
+Apply every rule listed there — these come from the bot's own trade history.
+
+━━━ CONFIDENCE & EXECUTION ━━━
+- 80–100%: H4 bias clear + H1 level perfect + M15 rejection + order flow aligned
+- 65–79%:  Setup good but one element is marginal (e.g. neutral order flow)
+- Below 65%: DO NOT trade — return "hold"
+- Minimum RR: 1.5:1. Reject anything tighter.
+- If a position is already open on a symbol → return "hold" for that symbol.
+- Return exactly one object per symbol, same order as input.
 
 """
 
@@ -235,6 +250,19 @@ class ClaudeTradeAgent:
                 except Exception:
                     logger.opt(exception=True).warning("[ClaudeAgent] Position sync failed for {}", symbol)
 
+        # Operator pause check (via Telegram /pause command)
+        if is_agent_paused():
+            logger.info("[ClaudeAgent] Agent paused by operator — holding all {} symbols", len(symbols))
+            return [
+                ClaudeDecision(
+                    symbol=symbol,
+                    action="hold",
+                    reasoning="Bot paused by operator via Telegram. Send /resume to re-enable.",
+                    confidence=100.0,
+                )
+                for symbol in symbols
+            ]
+
         # Daily loss limit check
         if daily_pnl <= -daily_loss_limit:
             logger.warning("[ClaudeAgent] Daily loss limit hit — holding all {} symbols", len(symbols))
@@ -309,11 +337,34 @@ class ClaudeTradeAgent:
         self, session: AsyncSession, symbols: list[str], daily_pnl: float
     ) -> str:
         """Build combined market context for all symbols."""
+        import asyncio
         import pandas as pd
         from app.models.candle import Candle
         from app.strategies.helpers.market_structure import detect_higher_highs_higher_lows
 
+        # Fetch order flow, news, and self-improvement insights in parallel
+        of_analyzer = OrderFlowAnalyzer()
+        improver = SelfImprover()
+        of_tasks = [of_analyzer.fetch(symbol) for symbol in symbols]
+        news_task = fetch_news(symbols)
+        insights_task = improver.get_latest_insight(session)
+
+        of_results, news_block, insights_block = await asyncio.gather(
+            asyncio.gather(*of_tasks, return_exceptions=True),
+            news_task,
+            insights_task,
+        )
+
+        order_flow_map: dict[str, object] = {}
+        for symbol, result in zip(symbols, of_results):
+            if isinstance(result, Exception):
+                logger.debug("[ClaudeAgent] Order flow fetch failed for {}: {}", symbol, result)
+            elif result is not None:
+                order_flow_map[symbol] = result
+
+        now_utc = datetime.now(timezone.utc)
         lines = [
+            f"Date/Time: {now_utc.strftime('%Y-%m-%d %H:%M UTC')} ({now_utc.strftime('%A')})",
             f"Account Balance: ${self._settings.account_balance:,.2f}",
             f"Today's P&L: ${daily_pnl:+.2f}",
             f"Environment: {'TESTNET' if self._settings.binance_testnet else 'MAINNET'}",
@@ -321,13 +372,22 @@ class ClaudeTradeAgent:
             "",
         ]
 
+        # Global context: news + self-improvement insights
+        if news_block:
+            lines.append(news_block)
+            lines.append("")
+        if insights_block:
+            lines.append(insights_block)
+            lines.append("")
+
         for symbol in symbols:
             lines.append(f"=== {symbol} ===")
 
             h1_candles_raw = []
             h4_candles_raw = []
 
-            for tf in ["H1", "H4"]:
+            # H4 — bias only (last 20 candles)
+            for tf in ["H4", "H1"]:
                 result = await session.execute(
                     select(Candle)
                     .where(Candle.symbol == symbol, Candle.timeframe == tf)
@@ -338,32 +398,45 @@ class ClaudeTradeAgent:
                 if candles:
                     lines.append(f"[{tf}] " + " | ".join(
                         f"{float(c.close):.4f}" for c in candles
-                    ) + " (latest close)")
+                    ) + " (latest→)")
                     if tf == "H1":
                         h1_candles_raw = candles
                     else:
                         h4_candles_raw = candles
 
-            # Structure detection using HH/HL analysis
-            for tf_label, raw in [("H1", h1_candles_raw), ("H4", h4_candles_raw)]:
+            # Structure labels — H4 = bias, H1 = level context
+            for tf_label, raw in [("H4", h4_candles_raw), ("H1", h1_candles_raw)]:
                 if len(raw) >= 10:
                     highs = pd.Series([float(c.high) for c in raw])
                     lows  = pd.Series([float(c.low)  for c in raw])
                     structure = detect_higher_highs_higher_lows(highs, lows, lookback=min(20, len(raw)))
                     lines.append(f"[STRUCTURE {tf_label}] {structure}")
 
-            # M15 candles (last 10)
+            # M30 candles (last 16 = 8 hours) — entry level
+            m30_result = await session.execute(
+                select(Candle)
+                .where(Candle.symbol == symbol, Candle.timeframe == "M30")
+                .order_by(Candle.timestamp.desc())
+                .limit(16)
+            )
+            m30_candles = list(reversed(m30_result.scalars().all()))
+            if m30_candles:
+                lines.append(f"[M30] " + " | ".join(
+                    f"{float(c.close):.4f}" for c in m30_candles
+                ) + " (latest→)")
+
+            # M15 candles (last 16 = 4 hours) — entry trigger
             m15_result = await session.execute(
                 select(Candle)
                 .where(Candle.symbol == symbol, Candle.timeframe == "M15")
                 .order_by(Candle.timestamp.desc())
-                .limit(10)
+                .limit(16)
             )
             m15_candles = list(reversed(m15_result.scalars().all()))
             if m15_candles:
                 lines.append(f"[M15] " + " | ".join(
                     f"{float(c.close):.4f}" for c in m15_candles
-                ) + " (latest close)")
+                ) + " (latest→)")
 
             open_result = await session.execute(
                 select(Signal).where(Signal.symbol == symbol, Signal.status == "active")
@@ -374,6 +447,13 @@ class ClaudeTradeAgent:
                 lines.append(f"OPEN: {s.direction} @ {float(s.entry_price):.4f} SL={float(s.stop_loss):.4f} TP={float(s.take_profit_1):.4f}")
             else:
                 lines.append("OPEN: none")
+
+            # Order flow (aggTrades delta/CVD from Binance mainnet)
+            of = order_flow_map.get(symbol)
+            if of is not None:
+                lines.append(of.to_context_string())
+            else:
+                lines.append("⚪ [ORDER FLOW] unavailable")
 
             # Recent win rate for this symbol (last 10 outcomes)
             recent_result = await session.execute(

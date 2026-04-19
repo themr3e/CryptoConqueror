@@ -53,6 +53,20 @@ class Settings(BaseSettings):
     # Master switch — set CRYPTO_ENABLED=true to activate the crypto pipeline.
     crypto_enabled: bool = False
 
+    # ── Position sizing (confidence-tiered) ──────────────────────────────────
+    trade_size_high_confidence: float = 75.0   # confidence % threshold → high tier
+    trade_size_mid_confidence:  float = 65.0   # confidence % threshold → mid tier
+    trade_size_low_confidence:  float = 50.0   # confidence % threshold → mid-low tier
+    trade_size_high:    float = 1000.0          # notional USDT when conf >= high
+    trade_size_mid:     float = 500.0           # notional USDT when conf >= mid
+    trade_size_mid_low: float = 250.0           # notional USDT when conf >= low
+    trade_size_low:     float = 100.0           # notional USDT when conf < low
+
+    # ── News ─────────────────────────────────────────────────────────────────
+    # Optional: register free at cryptopanic.com to get a token.
+    # Without it, news is sourced from Binance announcements RSS only.
+    cryptopanic_api_key: str = ""
+
     # ── Claude Autonomous Trading Agent ──────────────────────────────────────
     anthropic_api_key: str = ""
     claude_agent_enabled: bool = False

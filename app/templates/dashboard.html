@@ -3,9 +3,10 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>Dashboard — QuantLive</title>
+  <title>Dhaferr — Trading Dashboard</title>
+  <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.3/dist/chart.umd.min.js"></script>
   <style>
-    * { box-sizing: border-box; margin: 0; padding: 0; }
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
     body {
       background: #0d1117;
       color: #c9d1d9;
@@ -13,335 +14,360 @@
       font-size: 14px;
       min-height: 100vh;
     }
+
+    /* ── Header ── */
     header {
-      display: flex;
-      align-items: center;
-      justify-content: space-between;
+      display: flex; align-items: center; justify-content: space-between;
       padding: 12px 24px;
-      background: #161b22;
-      border-bottom: 1px solid #30363d;
-      position: sticky;
-      top: 0;
-      z-index: 100;
+      background: #161b22; border-bottom: 1px solid #30363d;
+      position: sticky; top: 0; z-index: 200;
     }
-    header h1 { font-size: 18px; color: #58a6ff; }
-    nav a {
-      color: #8b949e;
-      text-decoration: none;
-      margin-left: 20px;
-      font-size: 13px;
-      transition: color 0.15s;
-    }
-    nav a:hover { color: #c9d1d9; }
-    .badge {
-      display: inline-block;
-      padding: 2px 8px;
-      border-radius: 12px;
-      font-size: 11px;
-      font-weight: 600;
-    }
-    .badge-green { background: rgba(63,185,80,0.15); color: #3fb950; }
-    .badge-red   { background: rgba(248,81,73,0.15);  color: #f85149; }
-    .badge-gray  { background: rgba(139,148,158,0.15); color: #8b949e; }
-    .badge-blue  { background: rgba(88,166,255,0.15);  color: #58a6ff; }
-    .badge-yellow{ background: rgba(227,179,65,0.15);  color: #e3b341; }
-
-    main { padding: 24px; max-width: 1400px; margin: 0 auto; }
-
-    /* Stats row */
-    .stats-grid {
-      display: grid;
-      grid-template-columns: repeat(auto-fill, minmax(180px, 1fr));
-      gap: 16px;
-      margin-bottom: 28px;
-    }
-    .stat-card {
-      background: #161b22;
-      border: 1px solid #30363d;
-      border-radius: 8px;
-      padding: 16px;
-    }
-    .stat-card .label {
-      font-size: 11px;
-      color: #8b949e;
-      text-transform: uppercase;
-      letter-spacing: 0.5px;
-      margin-bottom: 6px;
-    }
-    .stat-card .value {
-      font-size: 24px;
-      font-weight: 600;
-      color: #f0f6fc;
-    }
-    .stat-card .sub {
-      font-size: 11px;
-      color: #8b949e;
-      margin-top: 4px;
-    }
-
-    /* Section */
-    .section { margin-bottom: 28px; }
-    .section-header {
-      display: flex;
-      align-items: center;
-      justify-content: space-between;
-      margin-bottom: 12px;
-    }
-    .section-title {
-      font-size: 15px;
-      font-weight: 600;
-      color: #f0f6fc;
-    }
-
-    /* Table */
-    .table-wrap { overflow-x: auto; }
-    table {
-      width: 100%;
-      border-collapse: collapse;
-      font-size: 13px;
-    }
-    th {
-      text-align: left;
-      padding: 8px 12px;
-      font-size: 11px;
-      font-weight: 600;
-      text-transform: uppercase;
-      letter-spacing: 0.5px;
-      color: #8b949e;
-      border-bottom: 1px solid #30363d;
-    }
-    td {
-      padding: 8px 12px;
-      border-bottom: 1px solid #21262d;
-      color: #c9d1d9;
-    }
-    tr:last-child td { border-bottom: none; }
-    tr:hover td { background: #161b22; }
-
-    /* Card */
-    .card {
-      background: #161b22;
-      border: 1px solid #30363d;
-      border-radius: 8px;
-      overflow: hidden;
-    }
-
-    /* Circuit breaker banner */
-    .cb-banner {
-      background: rgba(248,81,73,0.12);
-      border: 1px solid rgba(248,81,73,0.4);
-      border-radius: 8px;
-      padding: 12px 16px;
-      margin-bottom: 20px;
-      display: flex;
-      align-items: center;
-      gap: 10px;
-      color: #f85149;
-      font-weight: 600;
-    }
-    .cb-banner.hidden { display: none; }
-
-    /* Refresh */
+    .header-left { display: flex; align-items: center; gap: 16px; }
+    header h1 { font-size: 16px; font-weight: 700; color: #58a6ff; letter-spacing: 0.5px; }
+    .sys-status { font-size: 11px; padding: 3px 10px; border-radius: 12px; }
+    .sys-ok  { background: rgba(63,185,80,0.15); color: #3fb950; }
+    .sys-bad { background: rgba(248,81,73,0.15);  color: #f85149; }
+    .header-right { display: flex; align-items: center; gap: 12px; }
+    .uptime-text { font-size: 12px; color: #8b949e; }
     .refresh-btn {
-      background: #21262d;
-      border: 1px solid #30363d;
-      color: #c9d1d9;
-      padding: 6px 14px;
-      border-radius: 6px;
-      cursor: pointer;
-      font-size: 13px;
+      background: #21262d; border: 1px solid #30363d; color: #c9d1d9;
+      padding: 5px 12px; border-radius: 6px; cursor: pointer; font-size: 12px;
       transition: background 0.15s;
     }
     .refresh-btn:hover { background: #30363d; }
 
-    .timestamp { color: #8b949e; font-size: 12px; }
+    /* ── Tabs ── */
+    .tabs-bar {
+      display: flex; gap: 0; background: #161b22;
+      border-bottom: 1px solid #30363d; padding: 0 24px;
+      overflow-x: auto;
+    }
+    .tab-btn {
+      background: none; border: none; color: #8b949e; cursor: pointer;
+      padding: 10px 16px; font-size: 13px; font-weight: 500;
+      border-bottom: 2px solid transparent; white-space: nowrap;
+      transition: color 0.15s, border-color 0.15s;
+    }
+    .tab-btn:hover { color: #c9d1d9; }
+    .tab-btn.active { color: #58a6ff; border-bottom-color: #58a6ff; }
+    .tab-pane { display: none; }
+    .tab-pane.active { display: block; }
 
-    /* Jobs */
-    .jobs-grid {
-      display: grid;
-      grid-template-columns: repeat(auto-fill, minmax(260px, 1fr));
-      gap: 12px;
-    }
-    .job-card {
-      background: #161b22;
-      border: 1px solid #30363d;
-      border-radius: 8px;
-      padding: 14px;
-    }
-    .job-name { font-weight: 600; margin-bottom: 4px; }
-    .job-meta { font-size: 12px; color: #8b949e; }
+    /* ── Layout ── */
+    main { padding: 24px; max-width: 1600px; margin: 0 auto; }
 
-    /* Two-column layout */
-    .two-col {
-      display: grid;
-      grid-template-columns: 1fr 1fr;
-      gap: 20px;
+    /* ── Stat Cards ── */
+    .stats-grid {
+      display: grid; grid-template-columns: repeat(auto-fill, minmax(160px, 1fr));
+      gap: 14px; margin-bottom: 24px;
     }
-    @media (max-width: 900px) {
-      .two-col { grid-template-columns: 1fr; }
+    .stat-card {
+      background: #161b22; border: 1px solid #30363d; border-radius: 8px; padding: 14px;
+    }
+    .stat-card .label { font-size: 11px; color: #8b949e; text-transform: uppercase; letter-spacing: 0.5px; margin-bottom: 6px; }
+    .stat-card .value { font-size: 22px; font-weight: 700; color: #f0f6fc; }
+    .stat-card .sub   { font-size: 11px; color: #8b949e; margin-top: 4px; }
+
+    /* ── Badges ── */
+    .badge {
+      display: inline-block; padding: 2px 8px; border-radius: 12px;
+      font-size: 11px; font-weight: 600;
+    }
+    .badge-green  { background: rgba(63,185,80,0.15);   color: #3fb950; }
+    .badge-red    { background: rgba(248,81,73,0.15);    color: #f85149; }
+    .badge-gray   { background: rgba(139,148,158,0.15);  color: #8b949e; }
+    .badge-blue   { background: rgba(88,166,255,0.15);   color: #58a6ff; }
+    .badge-yellow { background: rgba(227,179,65,0.15);   color: #e3b341; }
+    .badge-purple { background: rgba(188,140,255,0.15);  color: #bc8cff; }
+
+    /* ── Section ── */
+    .section { margin-bottom: 28px; }
+    .section-header {
+      display: flex; align-items: center; justify-content: space-between; margin-bottom: 12px;
+    }
+    .section-title { font-size: 15px; font-weight: 600; color: #f0f6fc; }
+
+    /* ── Card ── */
+    .card { background: #161b22; border: 1px solid #30363d; border-radius: 8px; overflow: hidden; }
+
+    /* ── Table ── */
+    .table-wrap { overflow-x: auto; }
+    table { width: 100%; border-collapse: collapse; font-size: 13px; }
+    th {
+      text-align: left; padding: 8px 12px;
+      font-size: 11px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.5px;
+      color: #8b949e; border-bottom: 1px solid #30363d; white-space: nowrap;
+    }
+    td { padding: 8px 12px; border-bottom: 1px solid #21262d; color: #c9d1d9; }
+    tr:last-child td { border-bottom: none; }
+    tr.clickable:hover td { background: #1c2128; cursor: pointer; }
+
+    /* ── Expandable reasoning ── */
+    .reasoning-row td { background: #0d1117; padding: 0; }
+    .reasoning-box {
+      display: none; padding: 12px 16px;
+      border-top: 1px solid #21262d;
+      font-size: 12px; line-height: 1.7; color: #c9d1d9;
+      white-space: pre-wrap; font-family: monospace;
+      max-height: 300px; overflow-y: auto;
+    }
+    .reasoning-box.open { display: block; }
+
+    /* ── Two-col ── */
+    .two-col { display: grid; grid-template-columns: 1fr 1fr; gap: 20px; }
+    @media (max-width: 900px) { .two-col { grid-template-columns: 1fr; } }
+
+    /* ── Jobs grid ── */
+    .jobs-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(240px, 1fr)); gap: 10px; }
+    .job-card { background: #161b22; border: 1px solid #30363d; border-radius: 8px; padding: 12px; }
+    .job-name { font-weight: 600; font-size: 13px; margin-bottom: 3px; }
+    .job-meta { font-size: 11px; color: #8b949e; }
+
+    /* ── Chart canvas ── */
+    .chart-container { position: relative; padding: 16px; height: 280px; }
+
+    /* ── Pagination ── */
+    .pagination { display: flex; align-items: center; gap: 8px; padding: 12px 16px; border-top: 1px solid #30363d; }
+    .page-btn {
+      background: #21262d; border: 1px solid #30363d; color: #c9d1d9;
+      padding: 4px 12px; border-radius: 6px; cursor: pointer; font-size: 12px;
+    }
+    .page-btn:hover { background: #30363d; }
+    .page-btn:disabled { opacity: 0.4; cursor: default; }
+    .page-info { font-size: 12px; color: #8b949e; }
+
+    /* ── Filter bar ── */
+    .filter-bar { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; margin-bottom: 12px; }
+    .filter-input {
+      background: #21262d; border: 1px solid #30363d; border-radius: 6px;
+      color: #c9d1d9; padding: 5px 10px; font-size: 12px; outline: none;
+      transition: border-color 0.15s;
+    }
+    .filter-input:focus { border-color: #58a6ff; }
+    .filter-select {
+      background: #21262d; border: 1px solid #30363d; border-radius: 6px;
+      color: #c9d1d9; padding: 5px 10px; font-size: 12px; outline: none; cursor: pointer;
+    }
+    .filter-btn {
+      background: #1f6feb; border: 1px solid #388bfd; color: #fff;
+      padding: 5px 14px; border-radius: 6px; cursor: pointer; font-size: 12px;
+      font-weight: 600;
+    }
+    .filter-btn:hover { background: #388bfd; }
+
+    /* ── Action buttons ── */
+    .btn-approve {
+      background: rgba(63,185,80,0.15); border: 1px solid rgba(63,185,80,0.4); color: #3fb950;
+      padding: 4px 12px; border-radius: 6px; cursor: pointer; font-size: 12px; font-weight: 600;
+      transition: background 0.15s;
+    }
+    .btn-approve:hover { background: rgba(63,185,80,0.3); }
+    .btn-reject {
+      background: rgba(248,81,73,0.12); border: 1px solid rgba(248,81,73,0.4); color: #f85149;
+      padding: 4px 12px; border-radius: 6px; cursor: pointer; font-size: 12px; font-weight: 600;
+      transition: background 0.15s;
+    }
+    .btn-reject:hover { background: rgba(248,81,73,0.25); }
+    .btn-run {
+      background: #238636; border: 1px solid #2ea043; color: #fff;
+      padding: 7px 20px; border-radius: 6px; cursor: pointer; font-size: 13px;
+      font-weight: 600; transition: background 0.15s;
+    }
+    .btn-run:hover { background: #2ea043; }
+    .btn-run:disabled { opacity: 0.5; cursor: default; }
+    .btn-view {
+      background: #21262d; border: 1px solid #30363d; color: #c9d1d9;
+      padding: 3px 10px; border-radius: 5px; cursor: pointer; font-size: 11px;
+    }
+    .btn-view:hover { background: #30363d; }
+
+    /* ── Code viewer modal ── */
+    .modal-overlay {
+      display: none; position: fixed; inset: 0; background: rgba(0,0,0,0.7);
+      z-index: 1000; align-items: center; justify-content: center;
+    }
+    .modal-overlay.open { display: flex; }
+    .modal-box {
+      background: #161b22; border: 1px solid #30363d; border-radius: 10px;
+      width: 90%; max-width: 900px; max-height: 85vh; display: flex; flex-direction: column;
+    }
+    .modal-header {
+      display: flex; align-items: center; justify-content: space-between;
+      padding: 14px 18px; border-bottom: 1px solid #30363d;
+    }
+    .modal-title { font-size: 14px; font-weight: 600; color: #f0f6fc; }
+    .modal-close {
+      background: none; border: none; color: #8b949e; cursor: pointer; font-size: 18px; line-height: 1;
+    }
+    .modal-close:hover { color: #c9d1d9; }
+    .modal-body { padding: 16px; overflow-y: auto; flex: 1; }
+    .code-view {
+      background: #0d1117; border: 1px solid #30363d; border-radius: 6px;
+      padding: 14px; font-family: monospace; font-size: 12px; line-height: 1.6;
+      color: #c9d1d9; white-space: pre; overflow-x: auto;
     }
 
-    /* ── Settings section ──────────────────────────────────────────────── */
-    .settings-grid {
-      display: grid;
-      grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
-      gap: 16px;
-    }
-    .settings-group {
-      background: #161b22;
-      border: 1px solid #30363d;
-      border-radius: 8px;
-      padding: 16px;
-    }
+    /* ── Backtest lab ── */
+    .backtest-controls { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; margin-bottom: 20px; }
+    .backtest-status { font-size: 13px; color: #8b949e; }
+
+    .fold-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(200px, 1fr)); gap: 10px; margin-top: 16px; }
+    .fold-card { background: #0d1117; border: 1px solid #30363d; border-radius: 6px; padding: 12px; }
+    .fold-card .fold-num { font-size: 11px; color: #8b949e; margin-bottom: 6px; }
+    .fold-card .fold-wr { font-size: 18px; font-weight: 700; }
+    .fold-card .fold-meta { font-size: 11px; color: #8b949e; margin-top: 4px; }
+    .fold-pass { color: #3fb950; }
+    .fold-fail { color: #f85149; }
+
+    /* ── Order flow ── */
+    .of-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(280px, 1fr)); gap: 16px; }
+    .of-card { background: #161b22; border: 1px solid #30363d; border-radius: 8px; padding: 16px; }
+    .of-symbol { font-size: 14px; font-weight: 700; color: #f0f6fc; margin-bottom: 10px; }
+    .of-row { display: flex; justify-content: space-between; padding: 4px 0; font-size: 13px; border-bottom: 1px solid #21262d; }
+    .of-row:last-child { border-bottom: none; }
+    .of-key { color: #8b949e; }
+    .of-val { font-weight: 600; }
+    .of-bull { color: #3fb950; }
+    .of-bear { color: #f85149; }
+    .of-neutral { color: #e3b341; }
+
+    /* ── Insights ── */
+    .insight-card { background: #161b22; border: 1px solid #30363d; border-radius: 8px; padding: 16px; margin-bottom: 14px; }
+    .insight-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 10px; }
+    .insight-date { font-size: 12px; color: #8b949e; }
+    .insight-section { margin-bottom: 10px; }
+    .insight-section-title { font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.5px; color: #58a6ff; margin-bottom: 6px; }
+    .insight-list { list-style: none; padding: 0; }
+    .insight-list li { font-size: 13px; padding: 3px 0; padding-left: 14px; position: relative; }
+    .insight-list li::before { content: "→"; position: absolute; left: 0; color: #8b949e; }
+
+    /* ── Settings ── */
+    .settings-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(280px, 1fr)); gap: 16px; }
+    .settings-group { background: #161b22; border: 1px solid #30363d; border-radius: 8px; padding: 16px; }
     .settings-group-title {
-      font-size: 12px;
-      font-weight: 600;
-      text-transform: uppercase;
-      letter-spacing: 0.6px;
-      color: #58a6ff;
-      margin-bottom: 14px;
-      padding-bottom: 8px;
-      border-bottom: 1px solid #30363d;
+      font-size: 12px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.6px;
+      color: #58a6ff; margin-bottom: 14px; padding-bottom: 8px; border-bottom: 1px solid #30363d;
     }
-    .form-row {
-      display: flex;
-      flex-direction: column;
-      gap: 5px;
-      margin-bottom: 12px;
-    }
+    .form-row { display: flex; flex-direction: column; gap: 5px; margin-bottom: 12px; }
     .form-row:last-child { margin-bottom: 0; }
-    .form-row label {
-      font-size: 11px;
-      font-weight: 600;
-      text-transform: uppercase;
-      letter-spacing: 0.4px;
-      color: #8b949e;
-    }
+    .form-row label { font-size: 11px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.4px; color: #8b949e; }
     .form-row input[type="text"],
     .form-row input[type="password"],
     .form-row input[type="number"] {
-      background: #0d1117;
-      border: 1px solid #30363d;
-      border-radius: 6px;
-      color: #c9d1d9;
-      font-size: 13px;
-      padding: 7px 10px;
-      outline: none;
-      transition: border-color 0.15s;
-      width: 100%;
+      background: #0d1117; border: 1px solid #30363d; border-radius: 6px;
+      color: #c9d1d9; font-size: 13px; padding: 7px 10px; outline: none;
+      transition: border-color 0.15s; width: 100%;
     }
     .form-row input:focus { border-color: #58a6ff; }
     .form-row input::placeholder { color: #484f58; }
-    .key-status-row {
-      display: flex;
-      align-items: center;
-      gap: 8px;
-    }
-    .key-status-row input { flex: 1; }
-
-    /* Toggle switch */
-    .toggle-row {
-      display: flex;
-      align-items: center;
-      gap: 10px;
-    }
-    .toggle {
-      position: relative;
-      display: inline-block;
-      width: 40px;
-      height: 22px;
-      flex-shrink: 0;
-    }
+    .toggle { position: relative; display: inline-block; width: 40px; height: 22px; flex-shrink: 0; }
     .toggle input { opacity: 0; width: 0; height: 0; }
     .toggle-slider {
-      position: absolute;
-      cursor: pointer;
-      top: 0; left: 0; right: 0; bottom: 0;
-      background: #30363d;
-      border-radius: 22px;
-      transition: background 0.2s;
+      position: absolute; cursor: pointer; inset: 0; background: #30363d;
+      border-radius: 22px; transition: background 0.2s;
     }
     .toggle-slider:before {
-      position: absolute;
-      content: "";
-      height: 16px; width: 16px;
-      left: 3px; bottom: 3px;
-      background: #8b949e;
-      border-radius: 50%;
-      transition: transform 0.2s, background 0.2s;
+      position: absolute; content: ""; height: 16px; width: 16px; left: 3px; bottom: 3px;
+      background: #8b949e; border-radius: 50%; transition: transform 0.2s, background 0.2s;
     }
     .toggle input:checked + .toggle-slider { background: rgba(63,185,80,0.25); }
-    .toggle input:checked + .toggle-slider:before {
-      transform: translateX(18px);
-      background: #3fb950;
-    }
+    .toggle input:checked + .toggle-slider:before { transform: translateX(18px); background: #3fb950; }
+    .toggle-row { display: flex; align-items: center; gap: 10px; }
     .toggle-label { font-size: 13px; color: #c9d1d9; }
-
     .save-btn {
-      background: #238636;
-      border: 1px solid #2ea043;
-      color: #fff;
-      padding: 8px 20px;
-      border-radius: 6px;
-      cursor: pointer;
-      font-size: 13px;
-      font-weight: 600;
-      transition: background 0.15s;
+      background: #238636; border: 1px solid #2ea043; color: #fff;
+      padding: 8px 20px; border-radius: 6px; cursor: pointer; font-size: 13px;
+      font-weight: 600; transition: background 0.15s;
     }
     .save-btn:hover { background: #2ea043; }
     .save-btn:disabled { opacity: 0.5; cursor: default; }
-
     .settings-notice {
-      background: rgba(88,166,255,0.08);
-      border: 1px solid rgba(88,166,255,0.25);
-      border-radius: 6px;
-      padding: 10px 14px;
-      font-size: 12px;
-      color: #8b949e;
-      margin-bottom: 16px;
+      background: rgba(88,166,255,0.08); border: 1px solid rgba(88,166,255,0.25);
+      border-radius: 6px; padding: 10px 14px; font-size: 12px; color: #8b949e; margin-bottom: 16px;
     }
     .settings-notice strong { color: #58a6ff; }
+
+    /* ── Misc ── */
+    .timestamp { color: #8b949e; font-size: 12px; }
+    .empty-row td { color: #8b949e; text-align: center; padding: 24px; }
+    .pnl-pos { color: #3fb950; font-weight: 600; }
+    .pnl-neg { color: #f85149; font-weight: 600; }
+    .loading-text { color: #8b949e; font-size: 13px; padding: 16px; }
+    .alert-box {
+      background: rgba(227,179,65,0.1); border: 1px solid rgba(227,179,65,0.3);
+      border-radius: 6px; padding: 10px 14px; font-size: 13px; color: #e3b341;
+      margin-bottom: 14px; display: none;
+    }
+    .alert-box.show { display: block; }
   </style>
 </head>
 <body>
 
+<!-- ── Header ────────────────────────────────────────────────────────────── -->
 <header>
-  <h1>QuantLive Dashboard</h1>
-  <nav>
-    <a href="/chart/">Chart</a>
-    <a href="/health">Health</a>
-    <a href="/status">Status JSON</a>
-    <a href="#settings" style="color:#58a6ff;">⚙ Settings</a>
-  </nav>
+  <div class="header-left">
+    <h1>⚡ Dhaferr</h1>
+    <span class="sys-status sys-ok" id="sys-status-badge">●  Operational</span>
+  </div>
+  <div class="header-right">
+    <span class="uptime-text" id="uptime-display">Uptime: —</span>
+    <button class="refresh-btn" onclick="refreshAll()">↻ Refresh</button>
+  </div>
 </header>
 
-<main>
-  <!-- Circuit breaker banner -->
-  <div class="cb-banner hidden" id="cb-banner">
-    ⚠ Circuit Breaker Active — Signal generation paused
-  </div>
+<!-- ── Tab Bar ───────────────────────────────────────────────────────────── -->
+<div class="tabs-bar">
+  <button class="tab-btn active" data-tab="overview"   onclick="switchTab('overview')">Overview</button>
+  <button class="tab-btn"        data-tab="pnl"        onclick="switchTab('pnl')">P&amp;L</button>
+  <button class="tab-btn"        data-tab="journal"    onclick="switchTab('journal')">Trade Journal</button>
+  <button class="tab-btn"        data-tab="backtest"   onclick="switchTab('backtest')">Backtest Lab</button>
+  <button class="tab-btn"        data-tab="stratlab"   onclick="switchTab('stratlab')">Strategy Lab</button>
+  <button class="tab-btn"        data-tab="orderflow"  onclick="switchTab('orderflow')">Order Flow</button>
+  <button class="tab-btn"        data-tab="claudelog"  onclick="switchTab('claudelog')">Claude Log</button>
+  <button class="tab-btn"        data-tab="insights"   onclick="switchTab('insights')">Insights</button>
+  <button class="tab-btn"        data-tab="settings"   onclick="switchTab('settings')">⚙ Settings</button>
+</div>
 
-  <!-- Stats -->
-  <div class="stats-grid" id="stats-grid">
+<main>
+
+<!-- ══════════════════════════════════════════════════════════════════════ -->
+<!-- TAB: OVERVIEW                                                          -->
+<!-- ══════════════════════════════════════════════════════════════════════ -->
+<div class="tab-pane active" id="tab-overview">
+
+  <div class="stats-grid">
+    <div class="stat-card">
+      <div class="label">Total P&amp;L</div>
+      <div class="value" id="ov-total-pnl">—</div>
+      <div class="sub">USDT all-time</div>
+    </div>
+    <div class="stat-card">
+      <div class="label">Win Rate</div>
+      <div class="value" id="ov-win-rate">—</div>
+      <div class="sub" id="ov-wl">— W / — L</div>
+    </div>
     <div class="stat-card">
       <div class="label">Active Signals</div>
-      <div class="value" id="stat-active-signals">—</div>
+      <div class="value" id="ov-active">—</div>
+      <div class="sub" id="ov-today">— today</div>
     </div>
     <div class="stat-card">
-      <div class="label">Uptime</div>
-      <div class="value" id="stat-uptime">—</div>
+      <div class="label">Total Trades</div>
+      <div class="value" id="ov-total-signals">—</div>
+      <div class="sub">all-time</div>
     </div>
     <div class="stat-card">
-      <div class="label">DB Status</div>
-      <div class="value" id="stat-db">—</div>
+      <div class="label">Database</div>
+      <div class="value" id="ov-db" style="font-size:16px; padding-top:4px;">—</div>
+      <div class="sub">connection</div>
     </div>
     <div class="stat-card">
       <div class="label">Last Candle</div>
-      <div class="value" id="stat-last-candle" style="font-size:13px; padding-top:4px;">—</div>
+      <div class="value" id="ov-candle" style="font-size:13px; padding-top:6px;">—</div>
     </div>
     <div class="stat-card">
       <div class="label">Last Signal</div>
-      <div class="value" id="stat-last-signal" style="font-size:13px; padding-top:4px;">—</div>
+      <div class="value" id="ov-last-sig" style="font-size:13px; padding-top:6px;">—</div>
     </div>
   </div>
 
@@ -349,61 +375,42 @@
   <div class="section">
     <div class="section-header">
       <div class="section-title">Background Jobs</div>
-      <button class="refresh-btn" onclick="loadData()">↻ Refresh</button>
     </div>
     <div class="jobs-grid" id="jobs-grid">
-      <div class="job-card"><div class="job-meta">Loading...</div></div>
+      <div class="job-card"><div class="job-meta">Loading…</div></div>
     </div>
   </div>
 
   <div class="two-col">
-    <!-- Active Signals -->
+    <!-- Active signals -->
     <div class="section">
-      <div class="section-header">
-        <div class="section-title">Active Signals</div>
-      </div>
+      <div class="section-header"><div class="section-title">Active Signals</div></div>
       <div class="card">
         <div class="table-wrap">
-          <table id="signals-table">
-            <thead>
-              <tr>
-                <th>Direction</th>
-                <th>Symbol</th>
-                <th>Entry</th>
-                <th>SL</th>
-                <th>TP1</th>
-                <th>Confidence</th>
-                <th>Strategy</th>
-                <th>Time</th>
-              </tr>
-            </thead>
-            <tbody id="signals-body">
-              <tr><td colspan="7" style="color:#8b949e;">Loading...</td></tr>
+          <table>
+            <thead><tr>
+              <th>Dir</th><th>Symbol</th><th>Entry</th><th>SL</th><th>TP1</th>
+              <th>Conf</th><th>Strategy</th><th>Age</th>
+            </tr></thead>
+            <tbody id="ov-signals-body">
+              <tr><td colspan="8" class="empty-row">Loading…</td></tr>
             </tbody>
           </table>
         </div>
       </div>
     </div>
 
-    <!-- Strategy Performance -->
+    <!-- Strategy performance -->
     <div class="section">
-      <div class="section-header">
-        <div class="section-title">Strategy Performance (30d)</div>
-      </div>
+      <div class="section-header"><div class="section-title">Strategy Performance (30d)</div></div>
       <div class="card">
         <div class="table-wrap">
-          <table id="perf-table">
-            <thead>
-              <tr>
-                <th>Strategy</th>
-                <th>Win Rate</th>
-                <th>PF</th>
-                <th>Trades</th>
-                <th>Status</th>
-              </tr>
-            </thead>
-            <tbody id="perf-body">
-              <tr><td colspan="5" style="color:#8b949e;">Loading...</td></tr>
+          <table>
+            <thead><tr>
+              <th>Strategy</th><th>Win Rate</th><th>PF</th><th>Trades</th><th>Status</th>
+            </tr></thead>
+            <tbody id="ov-perf-body">
+              <tr><td colspan="5" class="empty-row">Loading…</td></tr>
             </tbody>
           </table>
         </div>
@@ -411,451 +418,1182 @@
     </div>
   </div>
 
-  <!-- Backtest Results -->
+  <!-- Recent closed trades -->
   <div class="section">
-    <div class="section-header">
-      <div class="section-title">Latest Backtest Results</div>
-    </div>
+    <div class="section-header"><div class="section-title">Recent Closed Trades</div></div>
     <div class="card">
       <div class="table-wrap">
-        <table id="bt-table">
-          <thead>
-            <tr>
-              <th>Strategy</th>
-              <th>Win Rate</th>
-              <th>PF</th>
-              <th>Sharpe</th>
-              <th>Max DD</th>
-              <th>Expectancy</th>
-              <th>Trades</th>
-              <th>Walk-Fwd</th>
-              <th>Date</th>
-            </tr>
-          </thead>
-          <tbody id="bt-body">
-            <tr><td colspan="9" style="color:#8b949e;">Loading...</td></tr>
+        <table>
+          <thead><tr>
+            <th>Symbol</th><th>Dir</th><th>Entry</th><th>SL</th><th>TP1</th>
+            <th>Conf</th><th>Result</th><th>P&amp;L</th><th>Strategy</th><th>Time</th>
+          </tr></thead>
+          <tbody id="ov-recent-body">
+            <tr><td colspan="10" class="empty-row">Loading…</td></tr>
           </tbody>
         </table>
       </div>
     </div>
   </div>
 
-  <!-- Optimized Parameters -->
+  <p class="timestamp" id="ov-last-updated"></p>
+</div>
+
+
+<!-- ══════════════════════════════════════════════════════════════════════ -->
+<!-- TAB: P&L                                                               -->
+<!-- ══════════════════════════════════════════════════════════════════════ -->
+<div class="tab-pane" id="tab-pnl">
+  <div class="section-header" style="margin-bottom:16px;">
+    <div class="section-title">Equity Curve</div>
+    <div class="filter-bar">
+      <select class="filter-select" id="pnl-days" onchange="loadPnL()">
+        <option value="7">Last 7 days</option>
+        <option value="30" selected>Last 30 days</option>
+        <option value="90">Last 90 days</option>
+        <option value="365">Last 365 days</option>
+      </select>
+    </div>
+  </div>
+
+  <div class="stats-grid" style="grid-template-columns: repeat(4, 1fr);">
+    <div class="stat-card">
+      <div class="label">Total P&amp;L</div>
+      <div class="value" id="pnl-total">—</div>
+      <div class="sub">USDT</div>
+    </div>
+    <div class="stat-card">
+      <div class="label">Best Day</div>
+      <div class="value" id="pnl-best-day">—</div>
+    </div>
+    <div class="stat-card">
+      <div class="label">Worst Day</div>
+      <div class="value" id="pnl-worst-day">—</div>
+    </div>
+    <div class="stat-card">
+      <div class="label">Trades in Range</div>
+      <div class="value" id="pnl-trade-count">—</div>
+    </div>
+  </div>
+
+  <div class="card section">
+    <div class="chart-container">
+      <canvas id="equity-chart"></canvas>
+    </div>
+  </div>
+
+  <div class="card section">
+    <div class="section-header" style="padding: 14px 16px 0;">
+      <div class="section-title">Daily P&amp;L</div>
+    </div>
+    <div class="chart-container">
+      <canvas id="daily-chart"></canvas>
+    </div>
+  </div>
+</div>
+
+
+<!-- ══════════════════════════════════════════════════════════════════════ -->
+<!-- TAB: TRADE JOURNAL                                                     -->
+<!-- ══════════════════════════════════════════════════════════════════════ -->
+<div class="tab-pane" id="tab-journal">
+  <div class="alert-box" id="journal-alert"></div>
+
+  <div class="filter-bar">
+    <input class="filter-input" id="journal-symbol" placeholder="Symbol (e.g. BTCUSDT)" style="width:160px;">
+    <select class="filter-select" id="journal-result">
+      <option value="">All results</option>
+      <option value="tp_hit">TP Hit</option>
+      <option value="tp1_hit">TP1 Hit</option>
+      <option value="tp2_hit">TP2 Hit</option>
+      <option value="sl_hit">SL Hit</option>
+      <option value="expired">Expired</option>
+    </select>
+    <button class="filter-btn" onclick="loadJournal(1)">Filter</button>
+    <span style="font-size:12px; color:#8b949e;">Click a row to expand Claude's reasoning</span>
+  </div>
+
+  <div class="card">
+    <div class="table-wrap">
+      <table>
+        <thead><tr>
+          <th>Time</th><th>Symbol</th><th>Dir</th><th>Entry</th><th>SL</th>
+          <th>TP1</th><th>R:R</th><th>Conf</th><th>Result</th><th>P&amp;L</th>
+          <th>Strategy</th><th>Reasoning</th>
+        </tr></thead>
+        <tbody id="journal-body">
+          <tr><td colspan="12" class="empty-row">Loading…</td></tr>
+        </tbody>
+      </table>
+    </div>
+    <div class="pagination" id="journal-pagination"></div>
+  </div>
+</div>
+
+
+<!-- ══════════════════════════════════════════════════════════════════════ -->
+<!-- TAB: BACKTEST LAB                                                      -->
+<!-- ══════════════════════════════════════════════════════════════════════ -->
+<div class="tab-pane" id="tab-backtest">
+  <div class="section">
+    <div class="section-title" style="margin-bottom:16px;">Walk-Forward Backtest</div>
+
+    <div class="backtest-controls">
+      <select class="filter-select" id="bt-strategy-select" style="min-width:220px;">
+        <option value="">— Select strategy —</option>
+      </select>
+      <button class="btn-run" id="bt-run-btn" onclick="runBacktest()" disabled>Run Walk-Forward</button>
+      <span class="backtest-status" id="bt-status-text">Select a strategy to begin</span>
+    </div>
+
+    <!-- Running indicator -->
+    <div class="alert-box" id="bt-running-alert" style="display:none; color:#58a6ff; background:rgba(88,166,255,0.1); border-color:rgba(88,166,255,0.3);">
+      ⏳ Backtest running — fetching 2 years of Binance data and testing all folds. This takes 2–5 minutes.
+    </div>
+
+    <!-- Results summary -->
+    <div id="bt-result-summary" style="display:none;">
+      <div class="stats-grid" style="grid-template-columns: repeat(5, 1fr);">
+        <div class="stat-card">
+          <div class="label">Blind Win Rate</div>
+          <div class="value" id="bt-wr">—</div>
+        </div>
+        <div class="stat-card">
+          <div class="label">Profit Factor</div>
+          <div class="value" id="bt-pf">—</div>
+        </div>
+        <div class="stat-card">
+          <div class="label">Blind Trades</div>
+          <div class="value" id="bt-trades">—</div>
+        </div>
+        <div class="stat-card">
+          <div class="label">Total P&amp;L</div>
+          <div class="value" id="bt-pnl">—</div>
+        </div>
+        <div class="stat-card">
+          <div class="label">Verdict</div>
+          <div class="value" id="bt-verdict" style="font-size:14px; padding-top:6px;">—</div>
+        </div>
+      </div>
+
+      <div class="section-title" style="margin: 20px 0 12px;">Per-Fold Results (blind test windows)</div>
+      <div class="fold-grid" id="bt-folds"></div>
+    </div>
+  </div>
+
+  <!-- Historical backtest results from DB -->
+  <div class="section">
+    <div class="section-title" style="margin-bottom:12px;">Stored Walk-Forward Results</div>
+    <div class="card">
+      <div class="table-wrap">
+        <table>
+          <thead><tr>
+            <th>Strategy</th><th>Win Rate</th><th>Profit Factor</th>
+            <th>Trades</th><th>Overfitted</th><th>Date</th>
+          </tr></thead>
+          <tbody id="bt-history-body">
+            <tr><td colspan="6" class="empty-row">Loading…</td></tr>
+          </tbody>
+        </table>
+      </div>
+    </div>
+  </div>
+</div>
+
+
+<!-- ══════════════════════════════════════════════════════════════════════ -->
+<!-- TAB: STRATEGY LAB                                                      -->
+<!-- ══════════════════════════════════════════════════════════════════════ -->
+<div class="tab-pane" id="tab-stratlab">
+  <div class="alert-box" id="stratlab-alert"></div>
+
+  <!-- Pending approval -->
   <div class="section">
     <div class="section-header">
-      <div class="section-title">Optimized Parameters</div>
+      <div class="section-title">Pending Approval</div>
+      <button class="refresh-btn" onclick="loadStratLab()">↻ Refresh</button>
     </div>
     <div class="card">
       <div class="table-wrap">
-        <table id="opt-table">
-          <thead>
-            <tr>
-              <th>Strategy</th>
-              <th>Params</th>
-              <th>Win Rate</th>
-              <th>PF</th>
-              <th>Trades</th>
-              <th>Overfitted</th>
-              <th>Updated</th>
-            </tr>
-          </thead>
-          <tbody id="opt-body">
-            <tr><td colspan="7" style="color:#8b949e;">Loading...</td></tr>
+        <table>
+          <thead><tr>
+            <th>Strategy Name</th><th>File</th><th>Size</th><th>Generated</th>
+            <th>View Code</th><th>Actions</th>
+          </tr></thead>
+          <tbody id="pending-body">
+            <tr><td colspan="6" class="empty-row">Loading…</td></tr>
           </tbody>
         </table>
       </div>
     </div>
   </div>
 
-  <p class="timestamp" id="last-updated"></p>
-
-  <!-- ── Settings & API Keys ──────────────────────────────────────────── -->
-  <div class="section" id="settings" style="margin-top: 36px; padding-top: 20px; border-top: 1px solid #30363d;">
+  <!-- Live auto strategies -->
+  <div class="section">
     <div class="section-header">
-      <div class="section-title">⚙ Settings &amp; API Keys</div>
-      <span class="badge badge-yellow" id="settings-restart-note" style="display:none;">Restart required to apply</span>
+      <div class="section-title">Live Auto-Generated Strategies</div>
+    </div>
+    <div class="card">
+      <div class="table-wrap">
+        <table>
+          <thead><tr>
+            <th>Strategy Name</th><th>File</th><th>Size</th><th>Integrated</th>
+            <th>View Code</th><th>Remove</th>
+          </tr></thead>
+          <tbody id="live-auto-body">
+            <tr><td colspan="6" class="empty-row">Loading…</td></tr>
+          </tbody>
+        </table>
+      </div>
+    </div>
+  </div>
+
+  <!-- Registry -->
+  <div class="section">
+    <div class="section-header"><div class="section-title">Registered Strategies (all)</div></div>
+    <div class="card" style="padding: 14px 16px;">
+      <div id="registry-list" style="display:flex; flex-wrap:wrap; gap:8px;">
+        <span class="loading-text">Loading…</span>
+      </div>
+    </div>
+  </div>
+</div>
+
+
+<!-- ══════════════════════════════════════════════════════════════════════ -->
+<!-- TAB: ORDER FLOW                                                        -->
+<!-- ══════════════════════════════════════════════════════════════════════ -->
+<div class="tab-pane" id="tab-orderflow">
+  <div class="section-header" style="margin-bottom:16px;">
+    <div class="section-title">Live Order Flow (90-min window)</div>
+    <div class="filter-bar">
+      <button class="refresh-btn" onclick="loadOrderFlow()">↻ Refresh All</button>
+    </div>
+  </div>
+
+  <div class="of-grid" id="of-grid">
+    <div class="loading-text">Loading…</div>
+  </div>
+
+  <div class="section" style="margin-top: 24px;">
+    <div class="section-header">
+      <div class="section-title">Custom Symbol</div>
+    </div>
+    <div class="filter-bar">
+      <input class="filter-input" id="of-custom-symbol" placeholder="e.g. SOLUSDT" style="width:150px;">
+      <button class="filter-btn" onclick="loadCustomOrderFlow()">Fetch</button>
+    </div>
+    <div id="of-custom-result" style="margin-top: 12px;"></div>
+  </div>
+</div>
+
+
+<!-- ══════════════════════════════════════════════════════════════════════ -->
+<!-- TAB: CLAUDE LOG                                                        -->
+<!-- ══════════════════════════════════════════════════════════════════════ -->
+<div class="tab-pane" id="tab-claudelog">
+  <div class="filter-bar">
+    <input class="filter-input" id="cl-symbol" placeholder="Symbol" style="width:140px;">
+    <select class="filter-select" id="cl-action">
+      <option value="">All actions</option>
+      <option value="open_long">open_long</option>
+      <option value="open_short">open_short</option>
+      <option value="hold">hold</option>
+      <option value="close">close</option>
+      <option value="self_analysis">self_analysis</option>
+    </select>
+    <button class="filter-btn" onclick="loadClaudeLog(1)">Filter</button>
+    <span style="font-size:12px; color:#8b949e;">Click row to expand full reasoning</span>
+  </div>
+
+  <div class="card">
+    <div class="table-wrap">
+      <table>
+        <thead><tr>
+          <th>Time</th><th>Symbol</th><th>Action</th><th>Confidence</th>
+          <th>Entry</th><th>Executed</th><th>Reasoning (preview)</th>
+        </tr></thead>
+        <tbody id="cl-body">
+          <tr><td colspan="7" class="empty-row">Loading…</td></tr>
+        </tbody>
+      </table>
+    </div>
+    <div class="pagination" id="cl-pagination"></div>
+  </div>
+</div>
+
+
+<!-- ══════════════════════════════════════════════════════════════════════ -->
+<!-- TAB: INSIGHTS                                                          -->
+<!-- ══════════════════════════════════════════════════════════════════════ -->
+<div class="tab-pane" id="tab-insights">
+  <div class="section-header" style="margin-bottom:16px;">
+    <div class="section-title">Self-Improvement Insights</div>
+    <span style="font-size:12px; color:#8b949e;">Claude analyzes patterns every 10 trades and updates its rules</span>
+  </div>
+  <div id="insights-container">
+    <div class="loading-text">Loading…</div>
+  </div>
+</div>
+
+
+<!-- ══════════════════════════════════════════════════════════════════════ -->
+<!-- TAB: SETTINGS                                                          -->
+<!-- ══════════════════════════════════════════════════════════════════════ -->
+<div class="tab-pane" id="tab-settings">
+  <div class="section-header" style="margin-bottom:16px;">
+    <div class="section-title">⚙ Settings &amp; API Keys</div>
+    <span class="badge badge-yellow" id="settings-restart-note" style="display:none;">Restart required to apply</span>
+  </div>
+
+  <div class="settings-notice">
+    <strong>Note:</strong> Changes are saved to the <code>.env</code> file and take effect after the next application restart.
+    Secret fields left blank are not changed.
+  </div>
+
+  <div class="settings-grid">
+    <div class="settings-group">
+      <div class="settings-group-title">Binance Futures</div>
+      <div class="form-row">
+        <label>Trading Mode</label>
+        <div class="toggle-row">
+          <label class="toggle">
+            <input type="checkbox" id="binance_testnet" onchange="updateTestnetLabel()">
+            <span class="toggle-slider"></span>
+          </label>
+          <span class="toggle-label" id="binance_testnet_label">Testnet (paper money)</span>
+        </div>
+      </div>
+      <div class="form-row">
+        <label>API Key <span id="binance_key_status"></span></label>
+        <input type="password" id="binance_futures_api_key" placeholder="Enter new key to replace" autocomplete="off">
+      </div>
+      <div class="form-row">
+        <label>API Secret <span id="binance_secret_status"></span></label>
+        <input type="password" id="binance_futures_api_secret" placeholder="Enter new secret to replace" autocomplete="off">
+      </div>
+      <div class="form-row">
+        <label>Leverage (×)</label>
+        <input type="number" id="binance_leverage" min="1" max="125" step="1">
+      </div>
     </div>
 
-    <div class="settings-notice">
-      <strong>Note:</strong> Changes are saved to the <code>.env</code> file and take effect after the next application restart.
-      Secret fields left blank are not changed.
+    <div class="settings-group">
+      <div class="settings-group-title">Crypto Trading</div>
+      <div class="form-row">
+        <label>Enable Crypto Pipeline</label>
+        <div class="toggle-row">
+          <label class="toggle">
+            <input type="checkbox" id="crypto_enabled" onchange="updateCryptoLabel()">
+            <span class="toggle-slider"></span>
+          </label>
+          <span class="toggle-label" id="crypto_enabled_label">Disabled</span>
+        </div>
+      </div>
+      <div class="form-row">
+        <label>Symbols (comma-separated)</label>
+        <input type="text" id="crypto_symbols" placeholder="BTCUSDT,ETHUSDT">
+      </div>
+      <div class="form-row">
+        <label>Account Balance (USDT)</label>
+        <input type="number" id="account_balance" min="0" step="100">
+      </div>
     </div>
 
-    <div class="settings-grid">
-
-      <!-- Binance Futures -->
-      <div class="settings-group">
-        <div class="settings-group-title">Binance Futures</div>
-
-        <div class="form-row">
-          <label>Trading Mode</label>
-          <div class="toggle-row">
-            <label class="toggle">
-              <input type="checkbox" id="binance_testnet" onchange="updateTestnetLabel()">
-              <span class="toggle-slider"></span>
-            </label>
-            <span class="toggle-label" id="binance_testnet_label">Testnet (paper money)</span>
-          </div>
-        </div>
-
-        <div class="form-row">
-          <label>API Key <span id="binance_key_status"></span></label>
-          <input type="password" id="binance_futures_api_key"
-                 placeholder="Enter new key to replace" autocomplete="off">
-        </div>
-
-        <div class="form-row">
-          <label>API Secret <span id="binance_secret_status"></span></label>
-          <input type="password" id="binance_futures_api_secret"
-                 placeholder="Enter new secret to replace" autocomplete="off">
-        </div>
-
-        <div class="form-row">
-          <label>Leverage (×)</label>
-          <input type="number" id="binance_leverage" min="1" max="125" step="1">
-        </div>
+    <div class="settings-group">
+      <div class="settings-group-title">Telegram</div>
+      <div class="form-row">
+        <label>Bot Token <span id="telegram_token_status"></span></label>
+        <input type="password" id="telegram_bot_token" placeholder="Enter new token to replace" autocomplete="off">
       </div>
-
-      <!-- Crypto Trading -->
-      <div class="settings-group">
-        <div class="settings-group-title">Crypto Trading</div>
-
-        <div class="form-row">
-          <label>Enable Crypto Pipeline</label>
-          <div class="toggle-row">
-            <label class="toggle">
-              <input type="checkbox" id="crypto_enabled" onchange="updateCryptoLabel()">
-              <span class="toggle-slider"></span>
-            </label>
-            <span class="toggle-label" id="crypto_enabled_label">Disabled</span>
-          </div>
-        </div>
-
-        <div class="form-row">
-          <label>Symbols (comma-separated)</label>
-          <input type="text" id="crypto_symbols" placeholder="BTCUSDT,ETHUSDT">
-        </div>
-
-        <div class="form-row">
-          <label>Account Balance (USDT)</label>
-          <input type="number" id="account_balance" min="0" step="100">
-        </div>
+      <div class="form-row">
+        <label>Chat ID</label>
+        <input type="text" id="telegram_chat_id" placeholder="e.g. -100123456789">
       </div>
-
-      <!-- Telegram -->
-      <div class="settings-group">
-        <div class="settings-group-title">Telegram Notifications (optional)</div>
-
-        <div class="form-row">
-          <label>Bot Token <span id="telegram_token_status"></span></label>
-          <input type="password" id="telegram_bot_token"
-                 placeholder="Enter new token to replace" autocomplete="off">
-        </div>
-
-        <div class="form-row">
-          <label>Chat ID</label>
-          <input type="text" id="telegram_chat_id" placeholder="e.g. -100123456789">
-        </div>
-      </div>
-
-      <!-- Gold / XAUUSD -->
-      <div class="settings-group">
-        <div class="settings-group-title">Gold / XAUUSD (optional — crypto-only is fine)</div>
-
-        <div class="form-row">
-          <label>Twelve Data API Key <span id="twelve_key_status"></span></label>
-          <input type="password" id="twelve_data_api_key"
-                 placeholder="Enter key to enable Gold trading" autocomplete="off">
-        </div>
-
-        <div style="font-size:11px; color:#8b949e; margin-top: 6px;">
-          Leave blank if you only trade crypto. Get a free key at
-          <a href="https://twelvedata.com" target="_blank" rel="noopener"
-             style="color:#58a6ff;">twelvedata.com</a>
-        </div>
-      </div>
-
-    </div><!-- /settings-grid -->
-
-    <div style="margin-top: 20px; display: flex; gap: 14px; align-items: center;">
-      <button class="save-btn" id="save-btn" onclick="saveSettings()">Save Settings</button>
-      <span id="settings-status" style="font-size: 13px; color: #8b949e;"></span>
     </div>
-  </div><!-- /settings section -->
 
-</main>
+    <div class="settings-group">
+      <div class="settings-group-title">Anthropic / Claude</div>
+      <div class="form-row">
+        <label>Anthropic API Key <span id="anthropic_key_status"></span></label>
+        <input type="password" id="anthropic_api_key" placeholder="Enter new key to replace" autocomplete="off">
+      </div>
+    </div>
+  </div>
+
+  <div style="margin-top: 20px; display: flex; gap: 14px; align-items: center;">
+    <button class="save-btn" id="save-btn" onclick="saveSettings()">Save Settings</button>
+    <span id="settings-status" style="font-size: 13px; color: #8b949e;"></span>
+  </div>
+</div>
+
+</main><!-- /main -->
+
+<!-- ── Code Viewer Modal ─────────────────────────────────────────────────── -->
+<div class="modal-overlay" id="code-modal" onclick="closeModal(event)">
+  <div class="modal-box">
+    <div class="modal-header">
+      <span class="modal-title" id="modal-title">Strategy Source</span>
+      <button class="modal-close" onclick="document.getElementById('code-modal').classList.remove('open')">✕</button>
+    </div>
+    <div class="modal-body">
+      <pre class="code-view" id="modal-code"></pre>
+    </div>
+  </div>
+</div>
+
 
 <script>
-  function fmt(v, decimals = 2) {
-    if (v == null) return '—';
-    return Number(v).toFixed(decimals);
+// ── Utilities ──────────────────────────────────────────────────────────────
+function fmt(v, d=2) { return v == null ? '—' : Number(v).toFixed(d); }
+function pct(v) { return v == null ? '—' : (Number(v)*100).toFixed(1)+'%'; }
+function relTime(iso) {
+  if (!iso) return '—';
+  const diff = Math.floor((Date.now() - new Date(iso)) / 1000);
+  if (diff < 60) return diff+'s ago';
+  if (diff < 3600) return Math.floor(diff/60)+'m ago';
+  if (diff < 86400) return Math.floor(diff/3600)+'h ago';
+  return Math.floor(diff/86400)+'d ago';
+}
+function absTime(iso) {
+  if (!iso) return '—';
+  const d = new Date(iso);
+  return d.toLocaleString('en-GB', {day:'2-digit',month:'short',hour:'2-digit',minute:'2-digit'});
+}
+function dirBadge(dir) {
+  if (dir==='BUY'||dir==='open_long')  return '<span class="badge badge-green">LONG</span>';
+  if (dir==='SELL'||dir==='open_short') return '<span class="badge badge-red">SHORT</span>';
+  return `<span class="badge badge-gray">${dir||'—'}</span>`;
+}
+function resultBadge(r) {
+  if (!r) return '<span class="badge badge-gray">Open</span>';
+  if (r.includes('tp')) return '<span class="badge badge-green">'+r.toUpperCase()+'</span>';
+  if (r==='sl_hit') return '<span class="badge badge-red">SL HIT</span>';
+  return `<span class="badge badge-yellow">${r}</span>`;
+}
+function pnlCell(v) {
+  if (v == null) return '<td>—</td>';
+  const cls = v >= 0 ? 'pnl-pos' : 'pnl-neg';
+  const sign = v >= 0 ? '+' : '';
+  return `<td class="${cls}">${sign}${Number(v).toFixed(2)}</td>`;
+}
+
+// ── Tab switching ─────────────────────────────────────────────────────────
+const _tabLoaded = {};
+function switchTab(name) {
+  document.querySelectorAll('.tab-btn').forEach(b => b.classList.toggle('active', b.dataset.tab===name));
+  document.querySelectorAll('.tab-pane').forEach(p => p.classList.toggle('active', p.id===`tab-${name}`));
+  if (!_tabLoaded[name]) {
+    _tabLoaded[name] = true;
+    if (name==='pnl')       loadPnL();
+    if (name==='journal')   loadJournal(1);
+    if (name==='backtest')  loadBacktestTab();
+    if (name==='stratlab')  loadStratLab();
+    if (name==='orderflow') loadOrderFlow();
+    if (name==='claudelog') loadClaudeLog(1);
+    if (name==='insights')  loadInsights();
+    if (name==='settings')  loadSettings();
   }
-  function pct(v) { return v == null ? '—' : (Number(v) * 100).toFixed(1) + '%'; }
-  function relTime(iso) {
-    if (!iso) return '—';
-    const d = new Date(iso);
-    const diff = Math.floor((Date.now() - d) / 1000);
-    if (diff < 60) return diff + 's ago';
-    if (diff < 3600) return Math.floor(diff/60) + 'm ago';
-    if (diff < 86400) return Math.floor(diff/3600) + 'h ago';
-    return Math.floor(diff/86400) + 'd ago';
+}
+
+// ── Refresh all visible ───────────────────────────────────────────────────
+function refreshAll() {
+  loadOverview();
+  const active = document.querySelector('.tab-btn.active')?.dataset.tab;
+  if (active && active !== 'overview') {
+    _tabLoaded[active] = false;
+    switchTab(active);
   }
-  function dirBadge(dir) {
-    if (dir === 'BUY') return '<span class="badge badge-green">BUY</span>';
-    if (dir === 'SELL') return '<span class="badge badge-red">SELL</span>';
-    return `<span class="badge badge-gray">${dir}</span>`;
-  }
+}
 
-  async function loadData() {
-    try {
-      const resp = await fetch('/dashboard/data');
-      const d = await resp.json();
+// ══════════════════════════════════════════════════════════════════════════
+// OVERVIEW
+// ══════════════════════════════════════════════════════════════════════════
+async function loadOverview() {
+  try {
+    const d = await fetch('/dashboard/data').then(r=>r.json());
+    const sys = d.system || {};
+    const perf = d.performance || {};
 
-      // Circuit breaker
-      const cb = d.system?.circuit_breaker_active;
-      document.getElementById('cb-banner').classList.toggle('hidden', !cb);
+    // Status badge
+    const ok = sys.status === 'operational';
+    const badge = document.getElementById('sys-status-badge');
+    badge.textContent = ok ? '●  Operational' : '●  Degraded';
+    badge.className = 'sys-status ' + (ok ? 'sys-ok' : 'sys-bad');
 
-      // Stats
-      document.getElementById('stat-active-signals').textContent = d.signals?.active ?? '—';
-      const uptime = d.system?.uptime_seconds;
-      if (uptime != null) {
-        window._uptimeBase = uptime;
-        window._uptimeAt = Date.now();
-      }
-      const dbOk = d.system?.database === 'connected';
-      document.getElementById('stat-db').innerHTML = dbOk
-        ? '<span class="badge badge-green">OK</span>'
-        : '<span class="badge badge-red">ERROR</span>';
-      document.getElementById('stat-last-candle').textContent = relTime(d.system?.last_candle);
-      document.getElementById('stat-last-signal').textContent = relTime(d.system?.last_signal_generated);
+    // Uptime
+    window._uptimeBase = sys.uptime_seconds;
+    window._uptimeAt   = Date.now();
 
-      // Jobs
-      const jobsEl = document.getElementById('jobs-grid');
-      if (d.jobs && d.jobs.length) {
-        jobsEl.innerHTML = d.jobs.map(j => `
+    // Stats
+    const pnlEl = document.getElementById('ov-total-pnl');
+    const pnlV  = perf.total_pnl ?? 0;
+    pnlEl.textContent = (pnlV>=0?'+':'')+Number(pnlV).toFixed(2);
+    pnlEl.className = 'value ' + (pnlV>=0?'pnl-pos':'pnl-neg');
+
+    document.getElementById('ov-win-rate').textContent = (perf.win_rate??0).toFixed(1)+'%';
+    document.getElementById('ov-wl').textContent = `${perf.wins??0} W / ${perf.losses??0} L`;
+    document.getElementById('ov-active').textContent = d.signals?.active ?? '—';
+    document.getElementById('ov-today').textContent  = (d.signals?.today??0)+' today';
+    document.getElementById('ov-total-signals').textContent = d.signals?.total ?? '—';
+
+    const dbOk = sys.database === 'connected';
+    document.getElementById('ov-db').innerHTML = dbOk
+      ? '<span class="badge badge-green">Connected</span>'
+      : '<span class="badge badge-red">Error</span>';
+    document.getElementById('ov-candle').textContent   = relTime(sys.last_candle);
+    document.getElementById('ov-last-sig').textContent = relTime(sys.last_signal_generated);
+
+    // Jobs
+    const jobsEl = document.getElementById('jobs-grid');
+    jobsEl.innerHTML = (d.jobs||[]).length
+      ? d.jobs.map(j=>`
           <div class="job-card">
-            <div class="job-name">${j.name || j.id}</div>
-            <div class="job-meta">Next: ${j.next_run ? relTime(j.next_run) : '—'}</div>
-          </div>
-        `).join('');
-      } else {
-        jobsEl.innerHTML = '<div class="job-card"><div class="job-meta">No jobs</div></div>';
-      }
+            <div class="job-name">${j.name||j.id}</div>
+            <div class="job-meta">Next: ${relTime(j.next_run)}</div>
+            <div class="job-meta" style="color:#484f58;font-size:10px;">${j.trigger||''}</div>
+          </div>`).join('')
+      : '<div class="job-card"><div class="job-meta">No jobs</div></div>';
 
-      // Active signals
-      const sigBody = document.getElementById('signals-body');
-      const activeSignals = (d.signals?.recent || []).filter(s => s.status === 'active');
-      if (activeSignals.length) {
-        sigBody.innerHTML = activeSignals.map(s => `
-          <tr>
-            <td>${dirBadge(s.direction)}</td>
-            <td><span class="badge badge-blue">${s.symbol || ''}</span></td>
-            <td>${fmt(s.entry)}</td>
-            <td>${fmt(s.sl)}</td>
-            <td>${fmt(s.tp1)}</td>
-            <td>${fmt(s.confidence)}%</td>
-            <td><span class="badge badge-gray">${s.strategy || '—'}</span></td>
-            <td class="timestamp">${relTime(s.created)}</td>
+    // Active signals
+    const activeSigs = (d.signals?.recent||[]).filter(s=>s.status==='active');
+    const sigBody = document.getElementById('ov-signals-body');
+    sigBody.innerHTML = activeSigs.length
+      ? activeSigs.map(s=>`<tr>
+          <td>${dirBadge(s.direction)}</td>
+          <td><span class="badge badge-blue">${s.symbol}</span></td>
+          <td>${fmt(s.entry)}</td><td>${fmt(s.sl)}</td><td>${fmt(s.tp1)}</td>
+          <td>${fmt(s.confidence)}%</td>
+          <td><span class="badge badge-gray">${s.strategy}</span></td>
+          <td class="timestamp">${relTime(s.created)}</td>
+        </tr>`).join('')
+      : '<tr><td colspan="8" class="empty-row">No active signals</td></tr>';
+
+    // Strategy performance
+    const perfBody = document.getElementById('ov-perf-body');
+    perfBody.innerHTML = (d.strategies||[]).length
+      ? d.strategies.map(p=>`<tr>
+          <td>${p.name}</td>
+          <td>${pct(p.win_rate)}</td>
+          <td>${fmt(p.profit_factor)}</td>
+          <td>${p.total_signals??'—'}</td>
+          <td>${p.is_degraded
+            ? '<span class="badge badge-red">Degraded</span>'
+            : '<span class="badge badge-green">OK</span>'}</td>
+        </tr>`).join('')
+      : '<tr><td colspan="5" class="empty-row">No data</td></tr>';
+
+    // Recent closed trades
+    const closed = (d.signals?.recent||[]).filter(s=>s.status!=='active').slice(0,15);
+    const recentBody = document.getElementById('ov-recent-body');
+    recentBody.innerHTML = closed.length
+      ? closed.map(s=>`<tr>
+          <td><span class="badge badge-blue">${s.symbol}</span></td>
+          <td>${dirBadge(s.direction)}</td>
+          <td>${fmt(s.entry)}</td><td>${fmt(s.sl)}</td><td>${fmt(s.tp1)}</td>
+          <td>${fmt(s.confidence)}%</td>
+          <td>${resultBadge(s.result)}</td>
+          ${pnlCell(s.pnl)}
+          <td><span class="badge badge-gray">${s.strategy}</span></td>
+          <td class="timestamp">${relTime(s.created)}</td>
+        </tr>`).join('')
+      : '<tr><td colspan="10" class="empty-row">No closed trades</td></tr>';
+
+    document.getElementById('ov-last-updated').textContent = 'Last updated: '+new Date().toLocaleTimeString();
+  } catch(e) { console.error('Overview load error', e); }
+}
+
+// Uptime ticker
+setInterval(()=>{
+  if (window._uptimeBase == null) return;
+  const total = Math.floor(window._uptimeBase + (Date.now()-window._uptimeAt)/1000);
+  const h = Math.floor(total/3600), m = Math.floor((total%3600)/60), s = total%60;
+  document.getElementById('uptime-display').textContent =
+    'Uptime: ' + (h>0?`${h}h ${m}m`:`${m}m ${s}s`);
+}, 1000);
+
+// ══════════════════════════════════════════════════════════════════════════
+// P&L
+// ══════════════════════════════════════════════════════════════════════════
+let _equityChart = null, _dailyChart = null;
+
+async function loadPnL() {
+  const days = document.getElementById('pnl-days').value;
+  try {
+    const d = await fetch(`/dashboard/pnl?days=${days}`).then(r=>r.json());
+    const pts  = d.points || [];
+    const daily= d.daily  || [];
+
+    // Stats
+    const totalPnl = d.total_pnl ?? 0;
+    const tEl = document.getElementById('pnl-total');
+    tEl.textContent = (totalPnl>=0?'+':'')+Number(totalPnl).toFixed(2);
+    tEl.className = 'value ' + (totalPnl>=0?'pnl-pos':'pnl-neg');
+    document.getElementById('pnl-trade-count').textContent = pts.length;
+
+    const dailyVals = daily.map(d=>d.pnl);
+    const best  = dailyVals.length ? Math.max(...dailyVals) : null;
+    const worst = dailyVals.length ? Math.min(...dailyVals) : null;
+    const bestEl  = document.getElementById('pnl-best-day');
+    const worstEl = document.getElementById('pnl-worst-day');
+    bestEl.textContent  = best  != null ? '+'+best.toFixed(2)  : '—';
+    worstEl.textContent = worst != null ? worst.toFixed(2) : '—';
+    bestEl.className  = 'value pnl-pos';
+    worstEl.className = 'value pnl-neg';
+
+    // Equity curve
+    const labels = pts.map(p=>p.t ? new Date(p.t).toLocaleDateString('en-GB',{month:'short',day:'numeric',hour:'2-digit',minute:'2-digit'}) : '');
+    const values = pts.map(p=>p.y);
+
+    if (_equityChart) _equityChart.destroy();
+    const ctx = document.getElementById('equity-chart').getContext('2d');
+    _equityChart = new Chart(ctx, {
+      type: 'line',
+      data: {
+        labels,
+        datasets: [{
+          label: 'Cumulative P&L (USDT)',
+          data: values,
+          borderColor: totalPnl >= 0 ? '#3fb950' : '#f85149',
+          backgroundColor: totalPnl >= 0 ? 'rgba(63,185,80,0.08)' : 'rgba(248,81,73,0.08)',
+          borderWidth: 2, pointRadius: 0, fill: true, tension: 0.3,
+        }]
+      },
+      options: {
+        responsive: true, maintainAspectRatio: false,
+        plugins: { legend: { labels: { color: '#8b949e', font: {size:11} } } },
+        scales: {
+          x: { ticks: { color: '#8b949e', font:{size:10}, maxTicksLimit: 10 }, grid: { color: '#21262d' } },
+          y: { ticks: { color: '#8b949e', font:{size:11} }, grid: { color: '#21262d' } },
+        },
+      }
+    });
+
+    // Daily bar chart
+    if (_dailyChart) _dailyChart.destroy();
+    const dctx = document.getElementById('daily-chart').getContext('2d');
+    _dailyChart = new Chart(dctx, {
+      type: 'bar',
+      data: {
+        labels: daily.map(d=>d.day),
+        datasets: [{
+          label: 'Daily P&L (USDT)',
+          data: daily.map(d=>d.pnl),
+          backgroundColor: daily.map(d=>d.pnl>=0?'rgba(63,185,80,0.6)':'rgba(248,81,73,0.6)'),
+          borderColor:      daily.map(d=>d.pnl>=0?'#3fb950':'#f85149'),
+          borderWidth: 1,
+        }]
+      },
+      options: {
+        responsive: true, maintainAspectRatio: false,
+        plugins: { legend: { labels: { color: '#8b949e', font:{size:11} } } },
+        scales: {
+          x: { ticks: { color: '#8b949e', font:{size:10} }, grid: { color: '#21262d' } },
+          y: { ticks: { color: '#8b949e', font:{size:11} }, grid: { color: '#21262d' } },
+        },
+      }
+    });
+  } catch(e) { console.error('P&L error', e); }
+}
+
+// ══════════════════════════════════════════════════════════════════════════
+// TRADE JOURNAL
+// ══════════════════════════════════════════════════════════════════════════
+let _jPage = 1;
+async function loadJournal(page) {
+  _jPage = page;
+  const symbol = document.getElementById('journal-symbol').value.trim();
+  const result = document.getElementById('journal-result').value;
+  const url = `/dashboard/trades?page=${page}&limit=25&symbol=${symbol}&result_filter=${result}`;
+  try {
+    const d = await fetch(url).then(r=>r.json());
+    const body = document.getElementById('journal-body');
+    if (!d.trades.length) {
+      body.innerHTML = '<tr><td colspan="12" class="empty-row">No trades found</td></tr>';
+    } else {
+      body.innerHTML = d.trades.map((t,i)=>{
+        const rid = 'r'+page+'_'+i;
+        return `
+          <tr class="clickable" onclick="toggleReasoning('${rid}')">
+            <td class="timestamp">${absTime(t.created)}</td>
+            <td><span class="badge badge-blue">${t.symbol}</span></td>
+            <td>${dirBadge(t.direction)}</td>
+            <td>${fmt(t.entry)}</td>
+            <td>${fmt(t.sl)}</td>
+            <td>${fmt(t.tp1)}</td>
+            <td>${fmt(t.rr)}</td>
+            <td>${fmt(t.confidence)}%</td>
+            <td>${resultBadge(t.result)}</td>
+            ${pnlCell(t.pnl)}
+            <td><span class="badge badge-gray">${t.strategy}</span></td>
+            <td>${t.reasoning ? '<span class="badge badge-purple">View ↓</span>' : '<span class="badge badge-gray">None</span>'}</td>
           </tr>
-        `).join('');
-      } else {
-        sigBody.innerHTML = '<tr><td colspan="8" style="color:#8b949e;">No active signals</td></tr>';
-      }
-
-      // Performance
-      const perfBody = document.getElementById('perf-body');
-      if (d.strategies && d.strategies.length) {
-        perfBody.innerHTML = d.strategies.map(p => `
-          <tr>
-            <td>${p.name}</td>
-            <td>${pct(p.win_rate)}</td>
-            <td>${fmt(p.profit_factor)}</td>
-            <td>${p.total_signals ?? '—'}</td>
-            <td>${p.is_degraded
-              ? '<span class="badge badge-red">Degraded</span>'
-              : '<span class="badge badge-green">OK</span>'}</td>
-          </tr>
-        `).join('');
-      } else {
-        perfBody.innerHTML = '<tr><td colspan="5" style="color:#8b949e;">No data</td></tr>';
-      }
-
-      // Backtests
-      const btBody = document.getElementById('bt-body');
-      const btResults = d.backtests?.results || [];
-      if (btResults.length) {
-        btBody.innerHTML = btResults.map(b => `
-          <tr>
-            <td>${b.strategy}</td>
-            <td>${pct(b.win_rate)}</td>
-            <td>${fmt(b.profit_factor)}</td>
-            <td>${fmt(b.sharpe_ratio)}</td>
-            <td>${pct(b.max_drawdown)}</td>
-            <td>${fmt(b.expectancy)}</td>
-            <td>${b.total_trades}</td>
-            <td>${b.is_walk_forward
-              ? '<span class="badge badge-blue">WF</span>'
-              : '<span class="badge badge-gray">Full</span>'}</td>
-            <td class="timestamp">${relTime(b.created)}</td>
-          </tr>
-        `).join('');
-      } else {
-        btBody.innerHTML = '<tr><td colspan="9" style="color:#8b949e;">No data</td></tr>';
-      }
-
-      // Optimized params
-      const optBody = document.getElementById('opt-body');
-      const optParams = d.backtests?.optimized_params || [];
-      if (optParams.length) {
-        optBody.innerHTML = optParams.map(o => `
-          <tr>
-            <td>${o.strategy}</td>
-            <td style="font-family: monospace; font-size:11px;">—</td>
-            <td>${pct(o.win_rate)}</td>
-            <td>${fmt(o.profit_factor)}</td>
-            <td>${o.total_trades}</td>
-            <td>${o.is_overfitted
-              ? '<span class="badge badge-yellow">Yes</span>'
-              : '<span class="badge badge-green">No</span>'}</td>
-            <td class="timestamp">${relTime(o.created)}</td>
-          </tr>
-        `).join('');
-      } else {
-        optBody.innerHTML = '<tr><td colspan="7" style="color:#8b949e;">No data</td></tr>';
-      }
-
-      document.getElementById('last-updated').textContent =
-        'Last updated: ' + new Date().toLocaleTimeString();
-
-    } catch (e) {
-      console.error('Dashboard load error', e);
+          <tr class="reasoning-row">
+            <td colspan="12">
+              <div class="reasoning-box" id="${rid}">${escHtml(t.reasoning || '— No Claude reasoning found for this trade —')}</div>
+            </td>
+          </tr>`;
+      }).join('');
     }
-  }
+    renderPagination('journal-pagination', page, d.total, 25, loadJournal);
+  } catch(e) { console.error('Journal error', e); }
+}
 
-  loadData();
-  setInterval(loadData, 60000); // Auto-refresh every 60s
+function toggleReasoning(id) {
+  document.getElementById(id)?.classList.toggle('open');
+}
+function escHtml(s) {
+  return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+}
 
-  // Tick uptime every second using local clock
-  setInterval(() => {
-    if (window._uptimeBase == null) return;
-    const elapsed = (Date.now() - window._uptimeAt) / 1000;
-    const total = Math.floor(window._uptimeBase + elapsed);
-    const h = Math.floor(total / 3600);
-    const m = Math.floor((total % 3600) / 60);
-    const s = total % 60;
-    document.getElementById('stat-uptime').textContent =
-      h > 0 ? `${h}h ${m}m` : `${m}m ${s}s`;
-  }, 1000);
+// ══════════════════════════════════════════════════════════════════════════
+// BACKTEST LAB
+// ══════════════════════════════════════════════════════════════════════════
+let _btJobId = null, _btPollTimer = null;
 
-  // ── Settings ──────────────────────────────────────────────────────────
+async function loadBacktestTab() {
+  // Load strategy list
+  try {
+    const d = await fetch('/dashboard/backtest/strategies').then(r=>r.json());
+    const sel = document.getElementById('bt-strategy-select');
+    sel.innerHTML = '<option value="">— Select strategy —</option>' +
+      (d.strategies||[]).map(s=>`<option value="${s.name}">${s.name}</option>`).join('');
+    sel.addEventListener('change', ()=>{
+      document.getElementById('bt-run-btn').disabled = !sel.value;
+      document.getElementById('bt-status-text').textContent = sel.value ? `Ready to test: ${sel.value}` : 'Select a strategy to begin';
+    });
+  } catch(e) {}
 
-  function keyStatusBadge(isSet) {
-    return isSet
-      ? '<span class="badge badge-green" style="font-size:10px;">✓ Set</span>'
-      : '<span class="badge badge-gray"  style="font-size:10px;">Not set</span>';
-  }
+  // Load DB walk-forward results
+  loadBacktestHistory();
+}
 
-  function updateTestnetLabel() {
-    const checked = document.getElementById('binance_testnet').checked;
-    document.getElementById('binance_testnet_label').textContent =
-      checked ? 'Testnet (paper money — safe)' : 'Mainnet (REAL MONEY)';
-  }
+async function loadBacktestHistory() {
+  try {
+    const d = await fetch('/dashboard/data').then(r=>r.json());
+    const wf = d.backtests?.walk_forward || [];
+    const body = document.getElementById('bt-history-body');
+    body.innerHTML = wf.length
+      ? wf.map(b=>`<tr>
+          <td>${b.strategy}</td>
+          <td>${pct(b.win_rate)}</td>
+          <td>${fmt(b.profit_factor)}</td>
+          <td>${b.total_trades??'—'}</td>
+          <td>${b.is_overfitted
+            ? '<span class="badge badge-yellow">Yes</span>'
+            : '<span class="badge badge-green">No</span>'}</td>
+          <td class="timestamp">${relTime(b.created)}</td>
+        </tr>`).join('')
+      : '<tr><td colspan="6" class="empty-row">No stored walk-forward results</td></tr>';
+  } catch(e) {}
+}
 
-  function updateCryptoLabel() {
-    const checked = document.getElementById('crypto_enabled').checked;
-    document.getElementById('crypto_enabled_label').textContent =
-      checked ? 'Enabled' : 'Disabled';
-  }
+async function runBacktest() {
+  const name = document.getElementById('bt-strategy-select').value;
+  if (!name) return;
+  const btn = document.getElementById('bt-run-btn');
+  btn.disabled = true;
+  document.getElementById('bt-status-text').textContent = 'Starting…';
+  document.getElementById('bt-running-alert').style.display = 'block';
+  document.getElementById('bt-result-summary').style.display = 'none';
 
-  async function loadSettings() {
-    try {
-      const resp = await fetch('/settings/');
-      if (!resp.ok) return;
-      const s = await resp.json();
-
-      document.getElementById('binance_testnet').checked = s.binance_testnet;
-      updateTestnetLabel();
-      document.getElementById('binance_key_status').innerHTML    = keyStatusBadge(s.binance_futures_api_key_set);
-      document.getElementById('binance_secret_status').innerHTML = keyStatusBadge(s.binance_futures_api_secret_set);
-      document.getElementById('binance_leverage').value = s.binance_leverage;
-
-      document.getElementById('crypto_enabled').checked = s.crypto_enabled;
-      updateCryptoLabel();
-      document.getElementById('crypto_symbols').value  = s.crypto_symbols;
-      document.getElementById('account_balance').value = s.account_balance;
-
-      document.getElementById('telegram_token_status').innerHTML = keyStatusBadge(s.telegram_bot_token_set);
-      document.getElementById('telegram_chat_id').value = s.telegram_chat_id;
-
-      document.getElementById('twelve_key_status').innerHTML = keyStatusBadge(s.twelve_data_api_key_set);
-    } catch (e) {
-      console.error('Settings load error', e);
-    }
-  }
-
-  async function saveSettings() {
-    const btn = document.getElementById('save-btn');
-    const status = document.getElementById('settings-status');
-    btn.disabled = true;
-    status.textContent = 'Saving…';
-    status.style.color = '#8b949e';
-
-    const payload = {
-      binance_testnet:  document.getElementById('binance_testnet').checked,
-      binance_leverage: parseInt(document.getElementById('binance_leverage').value, 10),
-      crypto_enabled:   document.getElementById('crypto_enabled').checked,
-      crypto_symbols:   document.getElementById('crypto_symbols').value.trim(),
-      account_balance:  parseFloat(document.getElementById('account_balance').value),
-      telegram_chat_id: document.getElementById('telegram_chat_id').value.trim(),
-    };
-
-    // Only include secret fields if the user typed something
-    const secretFields = [
-      ['binance_futures_api_key',    'binance_futures_api_key'],
-      ['binance_futures_api_secret', 'binance_futures_api_secret'],
-      ['telegram_bot_token',         'telegram_bot_token'],
-      ['twelve_data_api_key',        'twelve_data_api_key'],
-    ];
-    for (const [inputId, payloadKey] of secretFields) {
-      const v = document.getElementById(inputId).value.trim();
-      if (v) payload[payloadKey] = v;
-    }
-
-    try {
-      const resp = await fetch('/settings/', {
-        method:  'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body:    JSON.stringify(payload),
-      });
-      const result = await resp.json();
-
-      if (resp.ok) {
-        if (result.updated && result.updated.length > 0) {
-          status.textContent = `✓ Saved (${result.updated.length} key(s) updated). Restart app to apply.`;
-          status.style.color = '#3fb950';
-          document.getElementById('settings-restart-note').style.display = '';
-          // Clear secret input fields after save
-          for (const [inputId] of secretFields) {
-            document.getElementById(inputId).value = '';
-          }
-          await loadSettings(); // Refresh badges
-        } else {
-          status.textContent = 'No changes detected.';
-          status.style.color = '#8b949e';
-        }
-      } else {
-        status.textContent = `Error: ${result.detail || 'Save failed'}`;
-        status.style.color = '#f85149';
-      }
-    } catch (e) {
-      status.textContent = 'Network error — could not save.';
-      status.style.color = '#f85149';
-    }
-
+  try {
+    const resp = await fetch('/dashboard/backtest/run', {
+      method: 'POST',
+      headers: {'Content-Type':'application/json'},
+      body: JSON.stringify({strategy_name: name}),
+    });
+    const data = await resp.json();
+    if (!resp.ok) throw new Error(data.detail || 'Request failed');
+    _btJobId = data.job_id;
+    document.getElementById('bt-status-text').textContent = `Running… (job ${_btJobId})`;
+    _btPollTimer = setInterval(pollBacktest, 5000);
+  } catch(e) {
+    document.getElementById('bt-status-text').textContent = 'Error: '+e.message;
+    document.getElementById('bt-running-alert').style.display = 'none';
     btn.disabled = false;
   }
+}
 
-  loadSettings();
+async function pollBacktest() {
+  if (!_btJobId) return;
+  try {
+    const d = await fetch(`/dashboard/backtest/status/${_btJobId}`).then(r=>r.json());
+    if (d.status === 'running') {
+      document.getElementById('bt-status-text').textContent = 'Running… (fetching Binance data & testing folds)';
+      return;
+    }
+    clearInterval(_btPollTimer);
+    document.getElementById('bt-running-alert').style.display = 'none';
+    document.getElementById('bt-run-btn').disabled = false;
+
+    if (d.status === 'error') {
+      document.getElementById('bt-status-text').textContent = 'Error: '+d.error;
+      return;
+    }
+
+    const r = d.result;
+    document.getElementById('bt-status-text').textContent = 'Done!';
+    document.getElementById('bt-result-summary').style.display = 'block';
+
+    const wr = (r.win_rate*100).toFixed(1);
+    const wrEl = document.getElementById('bt-wr');
+    wrEl.textContent = wr+'%';
+    wrEl.className = 'value '+(r.win_rate>=0.75?'pnl-pos':r.win_rate>=0.60?'':'pnl-neg');
+
+    document.getElementById('bt-pf').textContent    = fmt(r.profit_factor);
+    document.getElementById('bt-trades').textContent= `${r.blind_wins}/${r.blind_trades}`;
+    const pnlV = r.total_pnl_pct;
+    const pnlEl= document.getElementById('bt-pnl');
+    pnlEl.textContent = (pnlV>=0?'+':'')+Number(pnlV).toFixed(1)+'%';
+    pnlEl.className = 'value '+(pnlV>=0?'pnl-pos':'pnl-neg');
+
+    const verdictEl = document.getElementById('bt-verdict');
+    if (r.passed) {
+      verdictEl.innerHTML = '<span class="badge badge-green">✅ PASSED</span>';
+    } else if (r.win_rate >= 0.60) {
+      verdictEl.innerHTML = '<span class="badge badge-yellow">⚠ MARGINAL</span>';
+    } else {
+      verdictEl.innerHTML = '<span class="badge badge-red">❌ FAILED</span>';
+    }
+
+    // Fold cards
+    const foldsEl = document.getElementById('bt-folds');
+    foldsEl.innerHTML = (r.folds||[]).map(f=>{
+      const wr = (f.win_rate*100).toFixed(0);
+      const cls = f.win_rate>=0.75?'fold-pass':f.win_rate>=0.60?'':' fold-fail';
+      return `<div class="fold-card">
+        <div class="fold-num">Fold ${f.fold+1} · ${f.trades} trades</div>
+        <div class="fold-wr${cls}">${wr}% win rate</div>
+        <div class="fold-meta">${f.wins} W · ${f.trades-f.wins} L · PF ${fmt(f.profit_factor)}</div>
+        <div class="fold-meta" style="margin-top:4px;">Blind: ${absTime(f.blind_start)}</div>
+      </div>`;
+    }).join('') || '<div class="loading-text">No fold data</div>';
+
+  } catch(e) { console.error('Poll error', e); }
+}
+
+// ══════════════════════════════════════════════════════════════════════════
+// STRATEGY LAB
+// ══════════════════════════════════════════════════════════════════════════
+async function loadStratLab() {
+  try {
+    const d = await fetch('/dashboard/auto-strategies').then(r=>r.json());
+
+    // Pending
+    const pendingBody = document.getElementById('pending-body');
+    pendingBody.innerHTML = (d.pending||[]).length
+      ? d.pending.map(s=>`<tr>
+          <td>${s.strategy_name}</td>
+          <td style="font-family:monospace;font-size:11px;">${s.filename}</td>
+          <td>${s.size_kb} KB</td>
+          <td class="timestamp">${relTime(s.created)}</td>
+          <td><button class="btn-view" onclick="viewStratCode('${s.filename}','${s.strategy_name}')">View</button></td>
+          <td style="display:flex;gap:6px;padding:8px 12px;">
+            <button class="btn-approve" onclick="approveStrat('${s.filename}','${s.strategy_name}')">Approve</button>
+            <button class="btn-reject"  onclick="rejectStrat('${s.filename}','${s.strategy_name}')">Reject</button>
+          </td>
+        </tr>`).join('')
+      : '<tr><td colspan="6" class="empty-row">No strategies awaiting approval</td></tr>';
+
+    // Live auto
+    const liveBody = document.getElementById('live-auto-body');
+    liveBody.innerHTML = (d.live||[]).length
+      ? d.live.map(s=>`<tr>
+          <td>${s.strategy_name}</td>
+          <td style="font-family:monospace;font-size:11px;">${s.filename}</td>
+          <td>${s.size_kb} KB</td>
+          <td class="timestamp">${relTime(s.created)}</td>
+          <td><button class="btn-view" onclick="viewStratCode('${s.filename}','${s.strategy_name}')">View</button></td>
+          <td><button class="btn-reject" onclick="rejectStrat('${s.filename}','${s.strategy_name}')">Remove</button></td>
+        </tr>`).join('')
+      : '<tr><td colspan="6" class="empty-row">No auto-generated strategies live yet</td></tr>';
+
+    // Registry
+    const regEl = document.getElementById('registry-list');
+    regEl.innerHTML = (d.registry||[]).map(n=>`<span class="badge badge-blue">${n}</span>`).join('') || '<span class="loading-text">Empty</span>';
+
+  } catch(e) { console.error('StratLab error', e); }
+}
+
+async function viewStratCode(filename, name) {
+  try {
+    const d = await fetch(`/dashboard/auto-strategies/${filename}/source`).then(r=>r.json());
+    document.getElementById('modal-title').textContent = `Strategy: ${name}`;
+    document.getElementById('modal-code').textContent = d.source || '— empty —';
+    document.getElementById('code-modal').classList.add('open');
+  } catch(e) { alert('Could not load source: '+e.message); }
+}
+
+function closeModal(e) {
+  if (e.target.id === 'code-modal') document.getElementById('code-modal').classList.remove('open');
+}
+
+async function approveStrat(filename, name) {
+  if (!confirm(`Approve and activate strategy "${name}"?`)) return;
+  try {
+    const resp = await fetch(`/dashboard/auto-strategies/${filename}/approve`, {method:'POST'});
+    const d = await resp.json();
+    showStratAlert(d.message || 'Approved!');
+    _tabLoaded['stratlab'] = false;
+    loadStratLab();
+  } catch(e) { showStratAlert('Error: '+e.message, true); }
+}
+
+async function rejectStrat(filename, name) {
+  if (!confirm(`Delete strategy "${name}"? This cannot be undone.`)) return;
+  try {
+    const resp = await fetch(`/dashboard/auto-strategies/${filename}`, {method:'DELETE'});
+    const d = await resp.json();
+    showStratAlert(d.message || 'Deleted.');
+    _tabLoaded['stratlab'] = false;
+    loadStratLab();
+  } catch(e) { showStratAlert('Error: '+e.message, true); }
+}
+
+function showStratAlert(msg, err=false) {
+  const el = document.getElementById('stratlab-alert');
+  el.textContent = msg;
+  el.className = 'alert-box show';
+  if (err) el.style.color = '#f85149';
+  else el.style.color = '#3fb950';
+  setTimeout(()=>el.className='alert-box', 4000);
+}
+
+// ══════════════════════════════════════════════════════════════════════════
+// ORDER FLOW
+// ══════════════════════════════════════════════════════════════════════════
+const OF_SYMBOLS = ['BTCUSDT','ETHUSDT','SOLUSDT','BNBUSDT','XRPUSDT'];
+
+async function loadOrderFlow() {
+  const grid = document.getElementById('of-grid');
+  grid.innerHTML = '<div class="loading-text">Fetching order flow…</div>';
+  try {
+    const results = await Promise.all(OF_SYMBOLS.map(s=>fetch(`/dashboard/orderflow/${s}`).then(r=>r.json())));
+    grid.innerHTML = results.map(of=>renderOFCard(of)).join('');
+  } catch(e) { grid.innerHTML = '<div class="loading-text">Error: '+e.message+'</div>'; }
+}
+
+async function loadCustomOrderFlow() {
+  const sym = document.getElementById('of-custom-symbol').value.trim().toUpperCase();
+  if (!sym) return;
+  const el = document.getElementById('of-custom-result');
+  el.innerHTML = '<div class="loading-text">Fetching…</div>';
+  try {
+    const of = await fetch(`/dashboard/orderflow/${sym}`).then(r=>r.json());
+    el.innerHTML = `<div class="of-grid">${renderOFCard(of)}</div>`;
+  } catch(e) { el.innerHTML = '<div class="loading-text">Error: '+e.message+'</div>'; }
+}
+
+function renderOFCard(of) {
+  if (!of.available) {
+    return `<div class="of-card"><div class="of-symbol">${of.symbol}</div>
+      <div class="of-row"><span class="of-key">Status</span><span class="badge badge-gray">Unavailable</span></div>
+      ${of.error?`<div class="of-row"><span class="of-key" style="color:#8b949e;font-size:11px;">${escHtml(of.error)}</span></div>`:''}
+    </div>`;
+  }
+  const biasClass = of.bias==='BULLISH'?'of-bull':of.bias==='BEARISH'?'of-bear':'of-neutral';
+  const cvdClass  = of.cvd_trend==='rising'?'of-bull':of.cvd_trend==='falling'?'of-bear':'of-neutral';
+  const d30 = of.delta_30m;
+  const d60 = of.delta_60m;
+  return `<div class="of-card">
+    <div class="of-symbol">${of.symbol}</div>
+    <div class="of-row"><span class="of-key">Pressure</span><span class="of-val ${biasClass}">${of.bias}</span></div>
+    <div class="of-row"><span class="of-key">Buy / Sell</span><span class="of-val">${(of.buy_ratio*100).toFixed(1)}% / ${(of.sell_ratio*100).toFixed(1)}%</span></div>
+    <div class="of-row"><span class="of-key">Delta 30m</span><span class="of-val ${d30>=0?'of-bull':'of-bear'}">${d30>=0?'+':''}${Number(d30).toFixed(0)}</span></div>
+    <div class="of-row"><span class="of-key">Delta 60m</span><span class="of-val ${d60>=0?'of-bull':'of-bear'}">${d60>=0?'+':''}${Number(d60).toFixed(0)}</span></div>
+    <div class="of-row"><span class="of-key">CVD Trend</span><span class="of-val ${cvdClass}">${of.cvd_trend?.toUpperCase()}</span></div>
+    <div class="of-row"><span class="of-key">Large Buys/Sells</span><span class="of-val">${of.large_buys} / ${of.large_sells}</span></div>
+    <div class="of-row"><span class="of-key">Volume (USDT)</span><span class="of-val">${Number(of.total_volume_usdt||0).toLocaleString(undefined,{maximumFractionDigits:0})}</span></div>
+  </div>`;
+}
+
+// ══════════════════════════════════════════════════════════════════════════
+// CLAUDE LOG
+// ══════════════════════════════════════════════════════════════════════════
+let _clPage = 1;
+async function loadClaudeLog(page) {
+  _clPage = page;
+  const symbol = document.getElementById('cl-symbol').value.trim();
+  const action = document.getElementById('cl-action').value;
+  const url = `/dashboard/decisions?page=${page}&limit=50&symbol=${symbol}&action_filter=${action}`;
+  try {
+    const d = await fetch(url).then(r=>r.json());
+    const body = document.getElementById('cl-body');
+    if (!d.decisions.length) {
+      body.innerHTML = '<tr><td colspan="7" class="empty-row">No decisions found</td></tr>';
+    } else {
+      body.innerHTML = d.decisions.map((dec,i)=>{
+        const rid = 'cl'+page+'_'+i;
+        const actionBadge = dec.action==='open_long'||dec.action==='open_short'
+          ? (dec.action==='open_long'?'<span class="badge badge-green">open_long</span>':'<span class="badge badge-red">open_short</span>')
+          : `<span class="badge badge-gray">${dec.action}</span>`;
+        const execBadge = dec.executed
+          ? '<span class="badge badge-green">✓</span>'
+          : dec.execution_error
+            ? '<span class="badge badge-red" title="'+escHtml(dec.execution_error||'')+'">✗ Error</span>'
+            : '<span class="badge badge-gray">—</span>';
+        const preview = escHtml((dec.reasoning||'').substring(0,80))+(dec.reasoning?.length>80?'…':'');
+        return `
+          <tr class="clickable" onclick="toggleReasoning('${rid}')">
+            <td class="timestamp">${absTime(dec.created)}</td>
+            <td><span class="badge badge-blue">${dec.symbol}</span></td>
+            <td>${actionBadge}</td>
+            <td>${dec.confidence != null ? dec.confidence+'%' : '—'}</td>
+            <td>${dec.entry != null ? fmt(dec.entry) : '—'}</td>
+            <td>${execBadge}</td>
+            <td style="font-family:monospace;font-size:11px;color:#8b949e;">${preview}</td>
+          </tr>
+          <tr class="reasoning-row">
+            <td colspan="7">
+              <div class="reasoning-box" id="${rid}">${escHtml(dec.reasoning||'—')}</div>
+            </td>
+          </tr>`;
+      }).join('');
+    }
+    renderPagination('cl-pagination', page, d.total, 50, loadClaudeLog);
+  } catch(e) { console.error('Claude log error', e); }
+}
+
+// ══════════════════════════════════════════════════════════════════════════
+// INSIGHTS
+// ══════════════════════════════════════════════════════════════════════════
+async function loadInsights() {
+  try {
+    const d = await fetch('/dashboard/insights').then(r=>r.json());
+    const el = document.getElementById('insights-container');
+    if (!d.insights.length) {
+      el.innerHTML = '<div class="loading-text">No self-improvement insights yet. Claude generates them every 10 trades.</div>';
+      return;
+    }
+    el.innerHTML = d.insights.map(ins=>{
+      const p = ins.parsed;
+      let content = '';
+      if (p) {
+        if (p.summary) content += `<div class="insight-section"><div class="insight-section-title">Summary</div><p style="font-size:13px;line-height:1.6;">${escHtml(p.summary)}</p></div>`;
+        if (p.win_patterns?.length) content += insightList('Win Patterns', p.win_patterns);
+        if (p.loss_patterns?.length) content += insightList('Loss Patterns', p.loss_patterns);
+        if (p.rule_updates?.length)  content += insightList('Rule Updates', p.rule_updates);
+        if (p.symbols_to_focus?.length) content += insightList('Focus On', p.symbols_to_focus);
+        if (p.symbols_to_avoid?.length) content += insightList('Avoid', p.symbols_to_avoid);
+      } else {
+        content = `<pre style="font-size:11px;color:#8b949e;white-space:pre-wrap;">${escHtml(ins.raw)}</pre>`;
+      }
+      return `<div class="insight-card">
+        <div class="insight-header">
+          <span class="badge badge-purple">Analysis #${ins.id}</span>
+          <span class="insight-date">${absTime(ins.created)}</span>
+        </div>
+        ${content}
+      </div>`;
+    }).join('');
+  } catch(e) { console.error('Insights error', e); }
+}
+function insightList(title, items) {
+  return `<div class="insight-section">
+    <div class="insight-section-title">${title}</div>
+    <ul class="insight-list">${items.map(i=>`<li>${escHtml(String(i))}</li>`).join('')}</ul>
+  </div>`;
+}
+
+// ══════════════════════════════════════════════════════════════════════════
+// SETTINGS
+// ══════════════════════════════════════════════════════════════════════════
+function keyStatusBadge(isSet) {
+  return isSet
+    ? '<span class="badge badge-green" style="font-size:10px;">✓ Set</span>'
+    : '<span class="badge badge-gray"  style="font-size:10px;">Not set</span>';
+}
+function updateTestnetLabel() {
+  const c = document.getElementById('binance_testnet').checked;
+  document.getElementById('binance_testnet_label').textContent = c ? 'Testnet (paper money — safe)' : 'Mainnet (REAL MONEY)';
+}
+function updateCryptoLabel() {
+  const c = document.getElementById('crypto_enabled').checked;
+  document.getElementById('crypto_enabled_label').textContent = c ? 'Enabled' : 'Disabled';
+}
+async function loadSettings() {
+  try {
+    const resp = await fetch('/settings/');
+    if (!resp.ok) return;
+    const s = await resp.json();
+    document.getElementById('binance_testnet').checked = s.binance_testnet;
+    updateTestnetLabel();
+    document.getElementById('binance_key_status').innerHTML    = keyStatusBadge(s.binance_futures_api_key_set);
+    document.getElementById('binance_secret_status').innerHTML = keyStatusBadge(s.binance_futures_api_secret_set);
+    document.getElementById('binance_leverage').value = s.binance_leverage;
+    document.getElementById('crypto_enabled').checked = s.crypto_enabled;
+    updateCryptoLabel();
+    document.getElementById('crypto_symbols').value  = s.crypto_symbols;
+    document.getElementById('account_balance').value = s.account_balance;
+    document.getElementById('telegram_token_status').innerHTML = keyStatusBadge(s.telegram_bot_token_set);
+    document.getElementById('telegram_chat_id').value = s.telegram_chat_id;
+    if (s.anthropic_api_key_set !== undefined)
+      document.getElementById('anthropic_key_status').innerHTML = keyStatusBadge(s.anthropic_api_key_set);
+  } catch(e) { console.error('Settings load error', e); }
+}
+async function saveSettings() {
+  const btn = document.getElementById('save-btn');
+  const status = document.getElementById('settings-status');
+  btn.disabled = true; status.textContent = 'Saving…'; status.style.color = '#8b949e';
+  const payload = {
+    binance_testnet:  document.getElementById('binance_testnet').checked,
+    binance_leverage: parseInt(document.getElementById('binance_leverage').value, 10),
+    crypto_enabled:   document.getElementById('crypto_enabled').checked,
+    crypto_symbols:   document.getElementById('crypto_symbols').value.trim(),
+    account_balance:  parseFloat(document.getElementById('account_balance').value),
+    telegram_chat_id: document.getElementById('telegram_chat_id').value.trim(),
+  };
+  const secretFields = [
+    ['binance_futures_api_key','binance_futures_api_key'],
+    ['binance_futures_api_secret','binance_futures_api_secret'],
+    ['telegram_bot_token','telegram_bot_token'],
+    ['anthropic_api_key','anthropic_api_key'],
+  ];
+  for (const [inputId, payloadKey] of secretFields) {
+    const v = document.getElementById(inputId).value.trim();
+    if (v) payload[payloadKey] = v;
+  }
+  try {
+    const resp = await fetch('/settings/', {method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(payload)});
+    const result = await resp.json();
+    if (resp.ok && result.updated?.length > 0) {
+      status.textContent = `✓ Saved (${result.updated.length} key(s) updated). Restart to apply.`;
+      status.style.color = '#3fb950';
+      document.getElementById('settings-restart-note').style.display = '';
+      for (const [inputId] of secretFields) document.getElementById(inputId).value = '';
+      await loadSettings();
+    } else if (resp.ok) {
+      status.textContent = 'No changes detected.';
+      status.style.color = '#8b949e';
+    } else {
+      status.textContent = 'Error: '+(result.detail||'Save failed');
+      status.style.color = '#f85149';
+    }
+  } catch(e) {
+    status.textContent = 'Network error.'; status.style.color = '#f85149';
+  }
+  btn.disabled = false;
+}
+
+// ══════════════════════════════════════════════════════════════════════════
+// PAGINATION helper
+// ══════════════════════════════════════════════════════════════════════════
+function renderPagination(containerId, page, total, limit, loadFn) {
+  const el = document.getElementById(containerId);
+  if (!el) return;
+  const totalPages = Math.ceil(total / limit) || 1;
+  el.innerHTML = `
+    <button class="page-btn" onclick="${loadFn.name}(${page-1})" ${page<=1?'disabled':''}>← Prev</button>
+    <span class="page-info">Page ${page} of ${totalPages} · ${total} total</span>
+    <button class="page-btn" onclick="${loadFn.name}(${page+1})" ${page>=totalPages?'disabled':''}>Next →</button>`;
+}
+
+// ══════════════════════════════════════════════════════════════════════════
+// INIT
+// ══════════════════════════════════════════════════════════════════════════
+loadOverview();
+setInterval(loadOverview, 60000);
 </script>
 </body>
 </html>

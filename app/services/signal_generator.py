@@ -302,16 +302,26 @@ class SignalGenerator:
         return datetime.now(timezone.utc) + timedelta(hours=expiry_hours)
 
     async def expire_stale_signals(self, session: AsyncSession) -> int:
-        """Mark active signals past their expiry as expired."""
+        """Mark active signals past their expiry as expired.
+
+        Also catches signals with no expiry set that are older than 48 hours —
+        these would otherwise live forever and generate ghost P&L when price
+        has moved far from the original entry.
+        """
+        from sqlalchemy import or_
+
         now = datetime.now(timezone.utc)
+        no_expiry_cutoff = now - timedelta(hours=48)
 
         stmt = (
             update(Signal)
             .where(
                 and_(
                     Signal.status == "active",
-                    Signal.expires_at.isnot(None),
-                    Signal.expires_at < now,
+                    or_(
+                        and_(Signal.expires_at.isnot(None), Signal.expires_at < now),
+                        and_(Signal.expires_at.is_(None), Signal.created_at < no_expiry_cutoff),
+                    ),
                 )
             )
             .values(status="expired")

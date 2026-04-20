@@ -168,9 +168,6 @@ class SignalPipeline:
         for i, candidate in enumerate(enriched):
             expires_at = self.generator.compute_expiry(candidate)
             position_size = approved_sizes.get(i)
-            reasoning = candidate.reasoning
-            if position_size is not None:
-                reasoning += f" | Position size: {position_size}"
 
             signal = Signal(
                 strategy_id=strategy_id,
@@ -183,7 +180,8 @@ class SignalPipeline:
                 take_profit_2=candidate.take_profit_2,
                 risk_reward=candidate.risk_reward,
                 confidence=candidate.confidence,
-                reasoning=reasoning,
+                reasoning=candidate.reasoning,
+                position_size=position_size,
                 status="active",
                 expires_at=expires_at,
             )

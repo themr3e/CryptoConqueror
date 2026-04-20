@@ -25,6 +25,7 @@ class Signal(Base):
     risk_reward: Mapped[Decimal] = mapped_column(Numeric(5, 2))
     confidence: Mapped[Decimal] = mapped_column(Numeric(5, 2))
     reasoning: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    position_size: Mapped[Optional[Decimal]] = mapped_column(Numeric(18, 8), nullable=True)
     status: Mapped[str] = mapped_column(String(20), default="active")
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now()

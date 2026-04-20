@@ -232,11 +232,11 @@ class CryptoOutcomeDetector:
         """Persist outcome and update signal status."""
         # Calculate P&L in USDT
         direction_mult = Decimal("1") if signal.direction == "BUY" else Decimal("-1")
-        raw_pnl = (exit_price - signal.entry_price) * direction_mult
+        pos_size = signal.position_size if signal.position_size else Decimal("1")
+        raw_pnl = (exit_price - signal.entry_price) * direction_mult * pos_size
 
-        # Subtract round-trip taker fee (approximate position size = 1 contract)
         taker_fee = await self._fee_model.get_taker_fee(session, signal.symbol)
-        fee_cost = signal.entry_price * taker_fee * 2
+        fee_cost = signal.entry_price * taker_fee * Decimal("2") * pos_size
         pnl_usdt = raw_pnl - fee_cost
 
         duration_minutes: int | None = None

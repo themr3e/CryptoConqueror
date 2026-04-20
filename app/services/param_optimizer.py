@@ -1,9 +1,9 @@
 """Parameter optimization engine for strategy tuning.
 
-Uses Latin Hypercube Sampling to explore parameter spaces, backtests each
-combination, ranks by composite score, validates the top candidates via
-walk-forward analysis AND Monte Carlo simulation to reject overfitted
-or statistically insignificant parameter sets.
+Uses Optuna (Bayesian TPE) to explore parameter spaces — smarter than Latin
+Hypercube Sampling because each trial informs the next.  The top candidates
+are validated via walk-forward analysis, trade-shuffle Monte Carlo, AND a
+candle-based random signal benchmark to confirm the edge is real.
 
 Exports:
     ParamOptimizer -- main service class
@@ -22,7 +22,7 @@ from loguru import logger
 
 from app.services.backtester import BacktestRunner
 from app.services.metrics_calculator import BacktestMetrics, MetricsCalculator
-from app.services.walk_forward import WalkForwardValidator
+from app.services.walk_forward import CandleMonteCarloValidator, WalkForwardValidator
 from app.strategies.base import BaseStrategy
 
 PARAM_RANGES: dict[str, dict[str, tuple[float, float, float]]] = {
@@ -68,6 +68,8 @@ class OptimizationResult:
     is_overfitted: bool
     combinations_tested: int
     monte_carlo_pvalue: float | None = None
+    candle_mc_pvalue: float | None = None   # p-value vs random entries (< 0.05 = real edge)
+    beats_random: bool = True               # False when candle_mc_pvalue > 0.05
 
 
 class ParamOptimizer:
@@ -81,13 +83,20 @@ class ParamOptimizer:
         self.runner = runner or BacktestRunner()
         self.wf_validator = wf_validator or WalkForwardValidator(runner=self.runner)
         self.metrics_calculator = MetricsCalculator()
+        self._candle_mc = CandleMonteCarloValidator()
 
     async def optimize_strategy(
         self,
         strategy_name: str,
         candles: pd.DataFrame,
     ) -> OptimizationResult | None:
-        """Optimize parameters for a single strategy."""
+        """Optimize parameters using Optuna Bayesian TPE (smarter than LHS).
+
+        Optuna learns from each trial — it models which parameter regions are
+        promising and focuses exploration there.  After NUM_SAMPLES trials the
+        top candidates are validated with walk-forward + trade Monte Carlo +
+        candle-based random signal benchmark.
+        """
         if strategy_name not in PARAM_RANGES:
             logger.warning("No parameter ranges defined for '{}', skipping", strategy_name)
             return None
@@ -98,36 +107,17 @@ class ParamOptimizer:
             logger.error("Strategy '{}' not in registry", strategy_name)
             return None
 
-        candidates = self._generate_candidates(strategy_name, ranges)
-        logger.info("Optimizer: {} candidates for '{}'", len(candidates), strategy_name)
-
-        scored: list[tuple[dict[str, float], BacktestMetrics, float, list]] = []
-
-        for idx, params in enumerate(candidates):
-            try:
-                strategy = strategy_cls(params=params)
-                metrics, trades = self.runner.run_full_backtest(strategy, candles, window_days=30)
-
-                if metrics.total_trades < MIN_TRADES_OPTIMIZE:
-                    continue
-
-                score = self._composite_score(metrics)
-                scored.append((params, metrics, score, trades))
-
-            except Exception:
-                logger.debug("Optimizer: candidate #{} for '{}' failed", idx, strategy_name)
-
-            if idx > 0 and idx % 10 == 0:
-                await asyncio.sleep(0)
-            if idx > 0 and idx % 30 == 0:
-                gc.collect()
+        # ── Optuna Bayesian search ────────────────────────────────────────────
+        scored = await self._optuna_search(strategy_name, strategy_cls, ranges, candles)
 
         if not scored:
             logger.warning("Optimizer: no viable candidates for '{}'", strategy_name)
             return None
 
         scored.sort(key=lambda x: x[2], reverse=True)
+        n_tested = len(scored)
 
+        # ── Validate top-N with WF + trade MC + candle MC ─────────────────────
         for rank, (params, metrics, score, trades) in enumerate(scored[:TOP_N_VALIDATE]):
             try:
                 strategy = strategy_cls(params=params)
@@ -155,14 +145,27 @@ class ParamOptimizer:
                 wfe_values = [v for v in [wf_result.wfe_win_rate, wf_result.wfe_profit_factor] if v is not None]
                 avg_wfe = sum(wfe_values) / len(wfe_values) if wfe_values else None
 
+                # Candle-based random signal benchmark
+                candle_mc_pvalue = self._candle_mc.test_edge(strategy, candles)
+                beats_random = candle_mc_pvalue <= 0.05
+                if not beats_random:
+                    logger.warning(
+                        "Optimizer: '{}' candidate #{} does NOT beat random entries (p={:.3f})",
+                        strategy_name, rank, candle_mc_pvalue,
+                    )
+                    # Don't reject — still return result but flag it
+                    # A strategy can fail this test early in its life and improve with data
+
                 return OptimizationResult(
                     strategy_name=strategy_name,
                     best_params=params,
                     metrics=metrics,
                     wfe_ratio=avg_wfe,
                     is_overfitted=False,
-                    combinations_tested=len(candidates),
+                    combinations_tested=n_tested,
                     monte_carlo_pvalue=mc_pvalue,
+                    candle_mc_pvalue=candle_mc_pvalue,
+                    beats_random=beats_random,
                 )
 
             except Exception:
@@ -177,8 +180,88 @@ class ParamOptimizer:
             metrics=best_metrics,
             wfe_ratio=None,
             is_overfitted=True,
-            combinations_tested=len(candidates),
+            combinations_tested=n_tested,
         )
+
+    async def _optuna_search(
+        self,
+        strategy_name: str,
+        strategy_cls,
+        ranges: dict,
+        candles: pd.DataFrame,
+    ) -> list[tuple[dict[str, float], BacktestMetrics, float, list]]:
+        """Run Optuna TPE search. Returns list of (params, metrics, score, trades)."""
+        try:
+            import optuna
+            optuna.logging.set_verbosity(optuna.logging.WARNING)
+        except ImportError:
+            logger.warning("Optuna not installed — falling back to LHS sampling")
+            candidates = self._generate_candidates(strategy_name, ranges)
+            return await self._evaluate_candidates(candidates, strategy_cls, candles)
+
+        scored: list[tuple[dict[str, float], BacktestMetrics, float, list]] = []
+        defaults = dict(strategy_cls.DEFAULT_PARAMS)
+
+        def objective(trial: "optuna.Trial") -> float:  # type: ignore[name-defined]
+            params = dict(defaults)
+            for name, (lo, hi, step) in ranges.items():
+                if step == int(step) and lo == int(lo) and hi == int(hi):
+                    params[name] = float(trial.suggest_int(name, int(lo), int(hi), step=int(step)))
+                else:
+                    params[name] = trial.suggest_float(name, lo, hi, step=step)
+            try:
+                strategy = strategy_cls(params=params)
+                metrics, trades = self.runner.run_full_backtest(strategy, candles, window_days=30)
+                if metrics.total_trades < MIN_TRADES_OPTIMIZE:
+                    return -1.0
+                s = self._composite_score(metrics)
+                scored.append((params, metrics, s, trades))
+                return s
+            except Exception:
+                return -1.0
+
+        study = optuna.create_study(
+            direction="maximize",
+            sampler=optuna.samplers.TPESampler(n_startup_trials=10, seed=42),
+        )
+
+        # Run trials in batches so we can yield to the event loop
+        batch = 10
+        for start in range(0, NUM_SAMPLES, batch):
+            n = min(batch, NUM_SAMPLES - start)
+            study.optimize(objective, n_trials=n, show_progress_bar=False)
+            await asyncio.sleep(0)
+            gc.collect()
+
+        logger.info(
+            "Optuna '{}': {} trials, best score={:.4f}",
+            strategy_name, len(study.trials), study.best_value if study.best_trial else 0,
+        )
+        return scored
+
+    async def _evaluate_candidates(
+        self,
+        candidates: list[dict],
+        strategy_cls,
+        candles: pd.DataFrame,
+    ) -> list[tuple[dict[str, float], BacktestMetrics, float, list]]:
+        """Evaluate pre-generated candidates (LHS fallback path)."""
+        scored = []
+        for idx, params in enumerate(candidates):
+            try:
+                strategy = strategy_cls(params=params)
+                metrics, trades = self.runner.run_full_backtest(strategy, candles, window_days=30)
+                if metrics.total_trades < MIN_TRADES_OPTIMIZE:
+                    continue
+                score = self._composite_score(metrics)
+                scored.append((params, metrics, score, trades))
+            except Exception:
+                pass
+            if idx % 10 == 0:
+                await asyncio.sleep(0)
+            if idx % 30 == 0:
+                gc.collect()
+        return scored
 
     def _monte_carlo_test(self, trades: list, original_metrics: BacktestMetrics) -> float:
         """Run Monte Carlo simulation to test statistical significance."""

@@ -233,9 +233,13 @@ class ParamOptimizer:
             await asyncio.sleep(0)
             gc.collect()
 
+        try:
+            best_val = study.best_value
+        except ValueError:
+            best_val = 0.0
         logger.info(
             "Optuna '{}': {} trials, best score={:.4f}",
-            strategy_name, len(study.trials), study.best_value if study.best_trial else 0,
+            strategy_name, len(study.trials), best_val,
         )
         return scored
 

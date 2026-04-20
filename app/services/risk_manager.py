@@ -29,8 +29,9 @@ ATR_FACTOR_MAX = 1.5
 # H1 candle = 60 minutes
 _CANDLE_MINUTES = 60
 
-# Global lock: set when StoplossGuard or MaxDrawdown fires
-_global_lock_until: datetime | None = None
+# Global locks — separate so MaxDrawdown can extend beyond StoplossGuard
+_stoploss_guard_lock: datetime | None = None
+_max_drawdown_lock: datetime | None = None
 
 # Per-symbol lock: set by CooldownPeriod and LowProfitPairs
 _symbol_lock_until: dict[str, datetime] = {}
@@ -224,10 +225,10 @@ class RiskManager:
 
     async def _check_stoploss_guard(self, session: AsyncSession) -> tuple[bool, str]:
         """Halt if 4+ SL hits in last 24 candles (24h). Lock 4 candles (4h)."""
-        global _global_lock_until
+        global _stoploss_guard_lock
         now = datetime.now(timezone.utc)
-        if _global_lock_until and now < _global_lock_until:
-            return True, f"StoplossGuard: locked until {_global_lock_until.strftime('%H:%M UTC')}"
+        if _stoploss_guard_lock and now < _stoploss_guard_lock:
+            return True, f"StoplossGuard: locked until {_stoploss_guard_lock.strftime('%H:%M UTC')}"
         try:
             cutoff = now - timedelta(hours=24)
             stmt = select(func.count()).select_from(Outcome).where(
@@ -238,20 +239,20 @@ class RiskManager:
         except Exception:
             return False, ""
         if sl_count >= 4:
-            _global_lock_until = now + timedelta(hours=4)
+            _stoploss_guard_lock = now + timedelta(hours=4)
             logger.warning(
                 "RiskManager: StoplossGuard — {} SL hits in 24h, locked 4h until {}",
-                sl_count, _global_lock_until.strftime("%H:%M UTC"),
+                sl_count, _stoploss_guard_lock.strftime("%H:%M UTC"),
             )
             return True, f"StoplossGuard: {sl_count} SL hits in 24h — locked 4h"
         return False, ""
 
     async def _check_max_drawdown_guard(self, session: AsyncSession) -> tuple[bool, str]:
         """Halt if equity drops 20% in last 48 candles (48h). Lock 12 candles (12h)."""
-        global _global_lock_until
+        global _max_drawdown_lock
         now = datetime.now(timezone.utc)
-        if _global_lock_until and now < _global_lock_until:
-            return True, f"MaxDrawdown: locked until {_global_lock_until.strftime('%H:%M UTC')}"
+        if _max_drawdown_lock and now < _max_drawdown_lock:
+            return True, f"MaxDrawdown: locked until {_max_drawdown_lock.strftime('%H:%M UTC')}"
         try:
             settings = get_settings()
             cutoff = now - timedelta(hours=48)
@@ -264,10 +265,10 @@ class RiskManager:
             return False, ""
         drawdown_pct = abs(period_pnl) / settings.account_balance if period_pnl < 0 else 0.0
         if drawdown_pct >= 0.20:
-            _global_lock_until = now + timedelta(hours=12)
+            _max_drawdown_lock = now + timedelta(hours=12)
             logger.warning(
                 "RiskManager: MaxDrawdown — {:.1%} equity drop in 48h, locked 12h until {}",
-                drawdown_pct, _global_lock_until.strftime("%H:%M UTC"),
+                drawdown_pct, _max_drawdown_lock.strftime("%H:%M UTC"),
             )
             return True, f"MaxDrawdown: {drawdown_pct:.1%} in 48h — locked 12h"
         return False, ""

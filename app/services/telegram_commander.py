@@ -184,7 +184,12 @@ class TelegramCommander:
         total_7d = len(week_outcomes)
         wr_7d = f"{wins_7d}/{total_7d} ({wins_7d/total_7d*100:.0f}%)" if total_7d else "no data"
 
-        agent_status = "⏸ PAUSED" if _agent_paused else "▶️ RUNNING"
+        if _agent_paused:
+            agent_status = "⏸ PAUSED"
+        elif _entries_paused:
+            agent_status = "🚫 NO NEW ENTRIES"
+        else:
+            agent_status = "▶️ RUNNING"
 
         lines = [
             f"📊 <b>Bot Status — {agent_status}</b>",

@@ -4,16 +4,19 @@ Polls Telegram for incoming messages and responds to commands.
 Only processes messages from the authorized TELEGRAM_CHAT_ID.
 
 Supported commands:
-    /help       — list all commands
-    /status     — active positions + today's P&L + win rate summary
-    /positions  — detailed list of all open trades
-    /pnl        — today's P&L breakdown
-    /winrate    — 7d and 30d win rates per strategy
-    /balance    — Binance account USDT balance
-    /pause      — pause the Claude agent (no new trades)
-    /resume     — resume the Claude agent
-    /top        — top 3 performing symbols this week
-    /worst      — worst 3 performing symbols this week
+    /help            — list all commands
+    /status          — active positions + today's P&L + win rate summary
+    /positions       — detailed list of all open trades
+    /pnl             — today's P&L breakdown
+    /winrate         — 7d and 30d win rates per strategy
+    /balance         — Binance account USDT balance
+    /pause           — pause the Claude agent (no new trades)
+    /resume          — resume the Claude agent
+    /stopentry       — pause new entries, keep existing positions open
+    /forceexit SYM   — force close a specific position (e.g. /forceexit BTCUSDT)
+    /performance     — per-symbol P&L breakdown (last 30 days)
+    /top             — top 3 performing symbols this week
+    /worst           — worst 3 performing symbols this week
 """
 
 from __future__ import annotations
@@ -31,14 +34,20 @@ from app.models.outcome import Outcome
 from app.models.signal import Signal
 
 
-# Module-level pause flag — shared across jobs
+# Module-level flags — shared across jobs
 _agent_paused: bool = False
+_entries_paused: bool = False
 _last_update_id: int = 0  # tracks Telegram message offset
 
 
 def is_agent_paused() -> bool:
     """Return True when the operator has paused the agent via Telegram."""
     return _agent_paused
+
+
+def is_entries_paused() -> bool:
+    """Return True when new entries are paused (existing positions stay open)."""
+    return _entries_paused
 
 
 class TelegramCommander:
@@ -81,11 +90,13 @@ class TelegramCommander:
             if not text.startswith("/"):
                 continue
 
-            command = text.split()[0].lower().split("@")[0]  # strip @botname suffix
+            parts = text.split()
+            command = parts[0].lower().split("@")[0]  # strip @botname suffix
+            args = parts[1] if len(parts) > 1 else ""
             logger.info("TelegramCommander: received command '{}' from chat {}", command, chat_id)
 
             try:
-                response = await self._dispatch(command, session)
+                response = await self._dispatch(command, args, session)
             except Exception as exc:
                 logger.opt(exception=True).error("TelegramCommander: error handling {}", command)
                 response = f"⚠️ Error processing <b>{command}</b>: {exc}"
@@ -94,19 +105,24 @@ class TelegramCommander:
 
     # ── Command dispatcher ────────────────────────────────────────────────────
 
-    async def _dispatch(self, command: str, session: AsyncSession) -> str:
+    async def _dispatch(self, command: str, args: str, session: AsyncSession) -> str:
+        if command == "/forceexit":
+            return await self._cmd_forceexit(args.upper(), session)
+
         handlers = {
-            "/help":      self._cmd_help,
-            "/status":    self._cmd_status,
-            "/positions": self._cmd_positions,
-            "/pnl":       self._cmd_pnl,
-            "/trades":    self._cmd_trades,
-            "/winrate":   self._cmd_winrate,
-            "/balance":   self._cmd_balance,
-            "/pause":     self._cmd_pause,
-            "/resume":    self._cmd_resume,
-            "/top":       self._cmd_top,
-            "/worst":     self._cmd_worst,
+            "/help":        self._cmd_help,
+            "/status":      self._cmd_status,
+            "/positions":   self._cmd_positions,
+            "/pnl":         self._cmd_pnl,
+            "/trades":      self._cmd_trades,
+            "/winrate":     self._cmd_winrate,
+            "/balance":     self._cmd_balance,
+            "/pause":       self._cmd_pause,
+            "/resume":      self._cmd_resume,
+            "/stopentry":   self._cmd_stopentry,
+            "/performance": self._cmd_performance,
+            "/top":         self._cmd_top,
+            "/worst":       self._cmd_worst,
         }
         handler = handlers.get(command)
         if handler is None:
@@ -118,17 +134,20 @@ class TelegramCommander:
     async def _cmd_help(self, session: AsyncSession) -> str:
         return (
             "🤖 <b>Zafir Trading Bot — Commands</b>\n\n"
-            "/status    — open positions + today's P&amp;L\n"
-            "/positions — detailed open trades\n"
-            "/pnl       — today's P&amp;L breakdown\n"
-            "/trades    — full trade journal with Claude's reasoning\n"
-            "/winrate   — 7d and 30d win rates\n"
-            "/balance   — Binance account balance\n"
-            "/top       — best symbols this week\n"
-            "/worst     — worst symbols this week\n"
-            "/pause     — stop taking new trades\n"
-            "/resume    — resume taking trades\n"
-            "/help      — this message"
+            "/status           — open positions + today's P&amp;L\n"
+            "/positions        — detailed open trades\n"
+            "/pnl              — today's P&amp;L breakdown\n"
+            "/trades           — full trade journal with Claude's reasoning\n"
+            "/winrate          — 7d and 30d win rates\n"
+            "/performance      — per-symbol P&amp;L (30 days)\n"
+            "/balance          — Binance account balance\n"
+            "/top              — best symbols this week\n"
+            "/worst            — worst symbols this week\n"
+            "/pause            — stop ALL new trades\n"
+            "/resume           — resume taking trades\n"
+            "/stopentry        — pause new entries, keep open positions\n"
+            "/forceexit SYMBOL — force close a specific position\n"
+            "/help             — this message"
         )
 
     async def _cmd_status(self, session: AsyncSession) -> str:
@@ -359,10 +378,94 @@ class TelegramCommander:
         return "⏸ <b>Bot paused.</b>\n\nNo new trades will be opened until you send /resume."
 
     async def _cmd_resume(self, session: AsyncSession) -> str:
-        global _agent_paused
+        global _agent_paused, _entries_paused
         _agent_paused = False
+        _entries_paused = False
         logger.info("TelegramCommander: Claude agent RESUMED by operator")
         return "▶️ <b>Bot resumed.</b>\n\nLooking for trades again."
+
+    async def _cmd_stopentry(self, session: AsyncSession) -> str:
+        global _entries_paused
+        _entries_paused = True
+        logger.warning("TelegramCommander: new entries PAUSED (existing positions stay open)")
+        return (
+            "🚫 <b>New entries paused.</b>\n\n"
+            "Existing positions remain open and managed.\n"
+            "Send /resume to start taking new trades again."
+        )
+
+    async def _cmd_forceexit(self, symbol: str, session: AsyncSession) -> str:
+        if not symbol:
+            return "⚠️ Usage: <b>/forceexit SYMBOL</b>\nExample: /forceexit BTCUSDT"
+
+        settings = get_settings()
+        if not settings.binance_order_execution_enabled:
+            return "⚠️ Binance API keys not configured."
+
+        # Find active signal for this symbol
+        result = await session.execute(
+            select(Signal)
+            .where(Signal.symbol == symbol, Signal.status == "active")
+            .order_by(Signal.created_at.desc())
+            .limit(1)
+        )
+        signal = result.scalar_one_or_none()
+        if signal is None:
+            return f"📭 No active position found for <b>{symbol}</b>."
+
+        try:
+            from app.services.binance_executor import BinanceExecutor
+            executor = BinanceExecutor()
+            pos_size = await executor.get_open_position_size(symbol)
+            closed = await executor.close_position(symbol, pos_size)
+
+            signal.status = "closed"
+            await session.commit()
+
+            if closed:
+                return (
+                    f"✅ <b>Force exit executed</b>\n\n"
+                    f"Symbol: {symbol}\n"
+                    f"Position size: {pos_size}\n"
+                    f"Signal #{signal.id} closed."
+                )
+            else:
+                return f"⚠️ Binance close order failed for {symbol}. Signal marked closed in DB."
+        except Exception as exc:
+            return f"⚠️ Force exit error for {symbol}: {exc}"
+
+    async def _cmd_performance(self, session: AsyncSession) -> str:
+        """Per-symbol P&L breakdown for the last 30 days."""
+        cutoff = datetime.now(timezone.utc) - timedelta(days=30)
+        result = await session.execute(
+            select(Signal.symbol, Outcome.result, Outcome.pnl_usdt)
+            .join(Outcome, Outcome.signal_id == Signal.id)
+            .where(Outcome.created_at >= cutoff)
+        )
+        rows = result.all()
+
+        if not rows:
+            return "📭 No closed trades in the last 30 days."
+
+        symbol_stats: dict[str, dict] = {}
+        for symbol, outcome_result, pnl in rows:
+            if symbol not in symbol_stats:
+                symbol_stats[symbol] = {"pnl": 0.0, "wins": 0, "total": 0}
+            symbol_stats[symbol]["pnl"] += float(pnl or 0)
+            symbol_stats[symbol]["total"] += 1
+            if outcome_result in ("tp1_hit", "tp2_hit"):
+                symbol_stats[symbol]["wins"] += 1
+
+        ranked = sorted(symbol_stats.items(), key=lambda x: x[1]["pnl"], reverse=True)
+        lines = ["📊 <b>Performance — Last 30 Days</b>", ""]
+        for symbol, stats in ranked:
+            wr = stats["wins"] / stats["total"] * 100 if stats["total"] else 0
+            emoji = "📈" if stats["pnl"] >= 0 else "📉"
+            lines.append(
+                f"{emoji} <b>{symbol}</b>: ${stats['pnl']:+.2f} | "
+                f"{stats['wins']}/{stats['total']} ({wr:.0f}%)"
+            )
+        return "\n".join(lines)
 
     async def _cmd_top(self, session: AsyncSession) -> str:
         return await self._cmd_symbol_perf(session, best=True)

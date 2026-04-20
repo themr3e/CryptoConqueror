@@ -193,7 +193,7 @@ class BinanceExecutor:
         await self._set_leverage(signal.symbol)
 
         # 2. Calculate position quantity
-        quantity = self._calculate_quantity(signal)
+        quantity = await self._calculate_quantity(signal)
         if quantity <= 0:
             return ExecutionResult(
                 signal_id=signal.id,
@@ -545,27 +545,40 @@ class BinanceExecutor:
             )
             return False
 
-    def _calculate_quantity(self, signal: Signal) -> Decimal:
-        """Calculate position size based on confidence-tiered notional (USDT).
+    async def _calculate_quantity(self, signal: Signal) -> Decimal:
+        """Dynamic position sizing: balance * 0.99 / max_open_trades.
 
-        Confidence tiers (set via Railway env vars):
-            >= TRADE_SIZE_HIGH_CONFIDENCE (75) → TRADE_SIZE_HIGH   ($1000)
-            >= TRADE_SIZE_MID_CONFIDENCE  (65) → TRADE_SIZE_MID    ($500)
-            >= TRADE_SIZE_LOW_CONFIDENCE  (50) → TRADE_SIZE_MID_LOW ($250)
-            <  50                              → TRADE_SIZE_LOW     ($100)
-
-        Quantity = notional_usdt / entry_price
-        (Leverage is applied by Binance automatically — we size by USDT value)
+        Falls back to confidence-tier sizing if balance fetch fails.
+        This auto-scales as the account grows — no more hardcoded tiers.
         """
         settings = get_settings()
-        confidence = float(signal.confidence or 0)
+        entry = signal.entry_price
+        if entry <= 0:
+            return Decimal("0")
 
-        # Confidence thresholds (with env var overrides)
+        # Primary: dynamic sizing from live balance
+        try:
+            balance = await self.get_account_balance()
+            if balance and balance > Decimal("10"):
+                max_open = Decimal(str(getattr(settings, "max_open_trades", 3)))
+                notional = (balance * Decimal("0.99")) / max_open
+                quantity = notional / entry
+                logger.info(
+                    "[BinanceExecutor] dynamic sizing {} balance=${} max_open={} → notional=${:.2f} qty={}",
+                    signal.symbol, float(balance), int(max_open), float(notional),
+                    _round_quantity(quantity, signal.symbol),
+                )
+                return _round_quantity(quantity, signal.symbol)
+        except Exception:
+            logger.opt(exception=True).warning(
+                "[BinanceExecutor] balance fetch failed, falling back to confidence tiers"
+            )
+
+        # Fallback: confidence-tiered notional
+        confidence = float(signal.confidence or 0)
         high_conf  = float(getattr(settings, "trade_size_high_confidence", 75))
         mid_conf   = float(getattr(settings, "trade_size_mid_confidence",  65))
         low_conf   = float(getattr(settings, "trade_size_low_confidence",  50))
-
-        # Notional USDT per tier (with env var overrides)
         high_usdt    = Decimal(str(getattr(settings, "trade_size_high",    1000)))
         mid_usdt     = Decimal(str(getattr(settings, "trade_size_mid",      500)))
         mid_low_usdt = Decimal(str(getattr(settings, "trade_size_mid_low",  250)))
@@ -580,13 +593,9 @@ class BinanceExecutor:
         else:
             notional = low_usdt
 
-        entry = signal.entry_price
-        if entry <= 0:
-            return Decimal("0")
-
         quantity = notional / entry
         logger.info(
-            "[BinanceExecutor] sizing {} conf={:.0f}% → notional=${} qty={}",
+            "[BinanceExecutor] tier sizing {} conf={:.0f}% → notional=${} qty={}",
             signal.symbol, confidence, notional, _round_quantity(quantity, signal.symbol),
         )
         return _round_quantity(quantity, signal.symbol)

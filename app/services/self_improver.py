@@ -41,6 +41,11 @@ Respond with a JSON object only:
 Be specific. "Avoid XYZUSDT when CVD is falling" is useful. "Trade better" is not.
 """
 
+_LOSS_PROMPT = """A crypto futures trade just hit stop-loss. Write one actionable lesson.
+Respond with JSON only — no markdown:
+{"setup": "describe the entry setup", "context": "what market context was wrong", "result": "sl_hit", "lesson": "one-sentence rule to prevent this loss next time"}
+Be specific. "Don't BUY BTCUSDT when H4 EMA is pointing down" beats "be more careful"."""
+
 
 class SelfImprover:
     """Analyzes recent trade history and produces improvement insights."""
@@ -84,38 +89,91 @@ class SelfImprover:
         return True
 
     async def get_latest_insight(self, session: AsyncSession) -> str:
-        """Return the most recent insight summary for Claude's context."""
+        """Return the last 3 lessons (losses + analyses) injected into Claude's context."""
         cutoff = datetime.now(timezone.utc) - timedelta(days=self.MAX_INSIGHT_AGE_DAYS)
         result = await session.execute(
             select(ClaudeDecision)
             .where(
-                ClaudeDecision.action == "self_analysis",
+                ClaudeDecision.action.in_(["self_analysis", "loss_lesson"]),
                 ClaudeDecision.created_at >= cutoff,
             )
             .order_by(ClaudeDecision.created_at.desc())
-            .limit(1)
+            .limit(3)
         )
-        row = result.scalar_one_or_none()
-        if row is None:
+        rows = result.scalars().all()
+        if not rows:
             return ""
 
-        try:
-            data = json.loads(row.reasoning.split("json=", 1)[1])
-        except Exception:
+        lines = ["🧠 [LAST 3 LESSONS — apply to this trade]"]
+        for row in rows:
+            try:
+                if row.action == "loss_lesson":
+                    data = json.loads(row.reasoning.split("lesson=", 1)[1])
+                    lesson = data.get("lesson", "")
+                    if lesson:
+                        lines.append(f"  ⚠️ {lesson}")
+                else:
+                    data = json.loads(row.reasoning.split("json=", 1)[1])
+                    if data.get("summary"):
+                        lines.append(f"  📊 {data['summary']}")
+                    for rule in data.get("rule_updates", [])[:2]:
+                        lines.append(f"  ✏️  {rule}")
+            except Exception:
+                continue
+
+        if len(lines) == 1:
             return ""
 
-        lines = ["🧠 [SELF-IMPROVEMENT INSIGHTS — from last trade analysis]"]
-        if data.get("summary"):
-            lines.append(f"  Summary: {data['summary']}")
-        if data.get("rule_updates"):
-            for rule in data["rule_updates"][:3]:
-                lines.append(f"  ✏️  {rule}")
-        if data.get("symbols_to_avoid"):
-            lines.append(f"  ⛔ Avoid: {', '.join(data['symbols_to_avoid'])}")
-        if data.get("symbols_to_focus"):
-            lines.append(f"  🎯 Focus: {', '.join(data['symbols_to_focus'])}")
         lines.append("  Apply these rules in addition to the SLC framework.")
         return "\n".join(lines)
+
+    async def analyze_loss(
+        self,
+        session: AsyncSession,
+        signal: "Signal",
+        outcome: "Outcome",
+    ) -> None:
+        """Write a micro-lesson after every stop-loss hit. Uses Haiku for low cost."""
+        settings = get_settings()
+        if not settings.anthropic_api_key:
+            return
+
+        trade_summary = (
+            f"LOSS: {signal.symbol} {signal.direction} "
+            f"entry={float(signal.entry_price):.4f} sl={float(signal.stop_loss):.4f} "
+            f"pnl={float(outcome.pnl_usdt or 0):+.2f}"
+        )
+        prior_reasoning = await self._get_claude_reasoning(session, signal.id)
+        if prior_reasoning:
+            trade_summary += f" | Claude said: {prior_reasoning[:150]}"
+
+        try:
+            client = anthropic.AsyncAnthropic(api_key=settings.anthropic_api_key)
+            message = await client.messages.create(
+                model="claude-haiku-4-5-20251001",
+                max_tokens=256,
+                system=_LOSS_PROMPT,
+                messages=[{"role": "user", "content": trade_summary}],
+            )
+            raw = message.content[0].text.strip()
+            if raw.startswith("```"):
+                raw = raw.split("```")[1]
+                if raw.startswith("json"):
+                    raw = raw[4:]
+            data = json.loads(raw)
+
+            lesson_row = ClaudeDecision(
+                symbol=signal.symbol,
+                action="loss_lesson",
+                reasoning=f"lesson={json.dumps(data)}",
+                confidence=100.0,
+                executed=False,
+            )
+            session.add(lesson_row)
+            await session.commit()
+            logger.info("[SelfImprover] Loss lesson — {}", data.get("lesson", "")[:100])
+        except Exception:
+            logger.opt(exception=True).warning("[SelfImprover] Loss lesson failed")
 
     # ── Internal ──────────────────────────────────────────────────────────────
 

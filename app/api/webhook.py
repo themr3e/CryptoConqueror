@@ -45,6 +45,7 @@ from app.models.outcome import Outcome
 from app.models.signal import Signal
 from app.models.strategy import Strategy
 from app.services.binance_executor import BinanceExecutor
+from app.services.telegram_commander import is_entries_paused
 from app.services.telegram_notifier import TelegramNotifier
 
 router = APIRouter(prefix="/webhook", tags=["webhook"])
@@ -128,6 +129,15 @@ async def tradingview_webhook(alert: TVAlert) -> dict[str, Any]:
         alert.symbol, alert.direction, alert.entry, alert.sl, alert.tp1,
         alert.confidence, strategy_name,
     )
+
+    # ── Gate 0: /stopentry pause check ───────────────────────────────────────
+    if is_entries_paused():
+        logger.info("Webhook: {} rejected — new entries paused via /stopentry", alert.symbol)
+        return {
+            "ok": False,
+            "rejected": True,
+            "reason": "new entries paused — send /resume to re-enable",
+        }
 
     async with async_sessionmaker() as session:
 

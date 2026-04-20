@@ -26,6 +26,13 @@ from app.services.telegram_notifier import TelegramNotifier
 _price_cache: dict[str, tuple[float, datetime]] = {}
 _CACHE_TTL_SECONDS = 30  # 30 seconds — must be shorter than the 2-min detection interval
 
+# High water mark per signal for trailing stop (signal_id → best price seen)
+_signal_high_water: dict[int, float] = {}
+
+# ROI table: minutes open → minimum profit ratio to exit
+# Exit at breakeven after 40m, take 1% after 30m, 2% after 20m
+_ROI_TABLE: dict[int, float] = {40: 0.0, 30: 0.01, 20: 0.02}
+
 
 class CryptoOutcomeDetector:
     """Checks active crypto signals against Binance mark price and records outcomes."""
@@ -98,7 +105,11 @@ class CryptoOutcomeDetector:
 
         price = Decimal(str(mark_price))
 
-        # Trail SL toward entry (or beyond) when sufficiently in profit.
+        # ROI table: time-based exit — runs before SL/TP so time exits aren't blocked
+        if self._check_roi_table(signal, price, now):
+            return await self._record_outcome(session, signal, "tp1_hit", price, now)
+
+        # Trail SL using Freqtrade positive offset pattern.
         # Must run BEFORE the SL/TP check so the tighter stop takes effect
         # immediately in the same evaluation cycle.
         await self._maybe_trail_stop(session, signal, price)
@@ -127,83 +138,87 @@ class CryptoOutcomeDetector:
 
         return None
 
+    @staticmethod
+    def _check_roi_table(signal: Signal, price: Decimal, now: datetime) -> bool:
+        """Return True if the ROI table says to exit this trade now."""
+        if not signal.created_at:
+            return False
+        created = signal.created_at
+        if created.tzinfo is None:
+            created = created.replace(tzinfo=timezone.utc)
+        age_minutes = (now - created).total_seconds() / 60
+
+        entry = float(signal.entry_price)
+        if entry <= 0:
+            return False
+
+        current = float(price)
+        if signal.direction == "BUY":
+            profit_ratio = (current - entry) / entry
+        else:
+            profit_ratio = (entry - current) / entry
+
+        # Walk from longest open time to shortest — use first threshold that applies
+        for min_minutes in sorted(_ROI_TABLE.keys(), reverse=True):
+            if age_minutes >= min_minutes:
+                return profit_ratio >= _ROI_TABLE[min_minutes]
+
+        return False
+
     async def _maybe_trail_stop(
         self,
         session: AsyncSession,
         signal: Signal,
         current_price: Decimal,
     ) -> None:
-        """Move SL toward or past entry when the trade is sufficiently in profit.
+        """Freqtrade positive-offset trailing stop.
 
-        Two stages:
-          Stage 1 — Break-even  (profit ≥ 50 % of initial risk):
-              Move SL to entry price.  Worst case from here is 0 loss.
-          Stage 2 — Trailing    (profit ≥ 100 % of initial risk):
-              Trail SL at 50 % of initial-risk distance behind current price.
-              This locks in a portion of the profit as the trade extends.
-
-        A minimum improvement threshold (5 % of initial risk) prevents
-        excessive order churn on micro price wiggles.
+        Activate: price moves +3% from entry in our favour.
+        Trail:    SL moves to 2% below (BUY) or above (SELL) the highest
+                  favourable price seen since activation.
+        SL only tightens — never loosens.
         """
         from app.config import get_settings
         settings = get_settings()
         if not settings.binance_order_execution_enabled:
-            return  # no API keys — skip Binance order management
+            return
 
         entry = float(signal.entry_price)
         sl    = float(signal.stop_loss)
         price = float(current_price)
 
-        initial_risk = abs(entry - sl)
-        if initial_risk <= 0:
-            return
-
-        new_sl: float
-
         if signal.direction == "BUY":
-            profit_distance = price - entry
-            if profit_distance <= 0:
-                return  # not in profit yet
-            profit_ratio = profit_distance / initial_risk
+            profit_pct = (price - entry) / entry if entry > 0 else 0.0
+            if profit_pct < 0.03:
+                return  # wait for +3% before engaging
 
-            if profit_ratio < 0.5:
-                return  # not enough profit to start trailing
+            # Track high water mark
+            hw = _signal_high_water.get(signal.id, price)
+            hw = max(hw, price)
+            _signal_high_water[signal.id] = hw
 
-            # Stage 1: break-even
-            new_sl = entry
-            # Stage 2: trail 0.5 × initial_risk behind price
-            if profit_ratio >= 1.0:
-                new_sl = max(new_sl, price - initial_risk * 0.5)
-
-            # Only update if the improvement is meaningful
-            if new_sl - sl < initial_risk * 0.05:
-                return
-            # SL must always stay below price for BUY (otherwise we'd instant-close)
+            new_sl = hw * (1.0 - 0.02)  # trail 2% below high water
+            if new_sl <= sl:
+                return  # no improvement
             if new_sl >= price:
+                return  # would instantly close
+
+        else:  # SELL
+            profit_pct = (entry - price) / entry if entry > 0 else 0.0
+            if profit_pct < 0.03:
                 return
 
-        else:  # SELL — profit = price falling below entry
-            profit_distance = entry - price
-            if profit_distance <= 0:
-                return
-            profit_ratio = profit_distance / initial_risk
+            # Track low water mark
+            hw = _signal_high_water.get(signal.id, price)
+            hw = min(hw, price)
+            _signal_high_water[signal.id] = hw
 
-            if profit_ratio < 0.5:
+            new_sl = hw * (1.0 + 0.02)  # trail 2% above low water
+            if new_sl >= sl:
                 return
-
-            # Stage 1: break-even
-            new_sl = entry
-            # Stage 2: trail 0.5 × initial_risk above price
-            if profit_ratio >= 1.0:
-                new_sl = min(new_sl, price + initial_risk * 0.5)
-
-            if sl - new_sl < initial_risk * 0.05:
-                return
-            # SL must always stay above price for SELL
             if new_sl <= price:
                 return
 
-        # Apply the trailing update via BinanceExecutor
         try:
             from app.services.binance_executor import BinanceExecutor
             executor = BinanceExecutor()
@@ -212,9 +227,8 @@ class CryptoOutcomeDetector:
             )
             if updated:
                 logger.info(
-                    "CryptoOutcomeDetector: trailed SL {} {} {:.4f} → {:.4f} "
-                    "(profit_ratio={:.2f}x)",
-                    signal.symbol, signal.direction, sl, new_sl, profit_ratio,
+                    "CryptoOutcomeDetector: trail SL {} {} {:.4f} → {:.4f} (profit={:.1%})",
+                    signal.symbol, signal.direction, sl, new_sl, profit_pct,
                 )
         except Exception:
             logger.opt(exception=True).warning(
@@ -263,6 +277,24 @@ class CryptoOutcomeDetector:
             "CryptoOutcomeDetector: {} {} {} @ {} → pnl_usdt={}",
             signal.symbol, signal.direction, result, exit_price, round(pnl_usdt, 4),
         )
+
+        # Clean up high water mark for this signal
+        _signal_high_water.pop(signal.id, None)
+
+        # Enforce 2h cooldown on this symbol after any exit
+        try:
+            from app.services.risk_manager import engage_cooldown
+            engage_cooldown(signal.symbol)
+        except Exception:
+            pass
+
+        # Write a micro-lesson after every stop-loss hit
+        if result == "sl_hit":
+            try:
+                from app.services.self_improver import SelfImprover
+                await SelfImprover().analyze_loss(session, signal, outcome)
+            except Exception:
+                logger.opt(exception=True).warning("SelfImprover: loss lesson failed")
 
         # Notify
         try:

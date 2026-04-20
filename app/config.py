@@ -53,7 +53,11 @@ class Settings(BaseSettings):
     # Master switch — set CRYPTO_ENABLED=true to activate the crypto pipeline.
     crypto_enabled: bool = False
 
-    # ── Position sizing (confidence-tiered) ──────────────────────────────────
+    # ── Position sizing ───────────────────────────────────────────────────────
+    # Dynamic: balance * 0.99 / max_open_trades (auto-scales with account)
+    max_open_trades: int = 3
+
+    # Confidence-tiered fallback (used when balance fetch fails)
     trade_size_high_confidence: float = 75.0   # confidence % threshold → high tier
     trade_size_mid_confidence:  float = 65.0   # confidence % threshold → mid tier
     trade_size_low_confidence:  float = 50.0   # confidence % threshold → mid-low tier

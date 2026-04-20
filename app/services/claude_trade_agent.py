@@ -29,7 +29,7 @@ from app.models.signal import Signal
 from app.services.crypto_news import fetch_news
 from app.services.order_flow import OrderFlowAnalyzer
 from app.services.self_improver import SelfImprover
-from app.services.telegram_commander import is_agent_paused
+from app.services.telegram_commander import is_agent_paused, is_entries_paused
 from app.services.telegram_notifier import TelegramNotifier
 
 
@@ -250,14 +250,15 @@ class ClaudeTradeAgent:
                 except Exception:
                     logger.opt(exception=True).warning("[ClaudeAgent] Position sync failed for {}", symbol)
 
-        # Operator pause check (via Telegram /pause command)
-        if is_agent_paused():
+        # Operator pause check (via Telegram /pause or /stopentry command)
+        if is_agent_paused() or is_entries_paused():
+            reason = "Bot paused by operator via Telegram. Send /resume to re-enable."
             logger.info("[ClaudeAgent] Agent paused by operator — holding all {} symbols", len(symbols))
             return [
                 ClaudeDecision(
                     symbol=symbol,
                     action="hold",
-                    reasoning="Bot paused by operator via Telegram. Send /resume to re-enable.",
+                    reasoning=reason,
                     confidence=100.0,
                 )
                 for symbol in symbols

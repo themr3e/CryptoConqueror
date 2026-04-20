@@ -1,14 +1,15 @@
 """Risk manager service: capital protection and position sizing.
 
 Enforces multiple risk constraints before approving trade signals:
-circuit breaker, daily loss limit, concurrent signal cap, and
-volatility-adjusted position sizing.
+circuit breaker, daily loss limit, concurrent signal cap,
+volatility-adjusted position sizing, and Freqtrade-style protections
+(StoplossGuard, MaxDrawdown, CooldownPeriod, LowProfitPairs).
 """
 
 from __future__ import annotations
 
 from dataclasses import dataclass
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from decimal import Decimal
 
 from loguru import logger
@@ -24,6 +25,25 @@ MAX_CONCURRENT_SIGNALS = 3
 DAILY_LOSS_LIMIT = 0.02     # 2% account drawdown
 ATR_FACTOR_MIN = 0.5
 ATR_FACTOR_MAX = 1.5
+
+# H1 candle = 60 minutes
+_CANDLE_MINUTES = 60
+
+# Global lock: set when StoplossGuard or MaxDrawdown fires
+_global_lock_until: datetime | None = None
+
+# Per-symbol lock: set by CooldownPeriod and LowProfitPairs
+_symbol_lock_until: dict[str, datetime] = {}
+
+
+def engage_cooldown(symbol: str) -> None:
+    """Enforce 2-candle (2h) cooldown after any trade exit on a symbol."""
+    global _symbol_lock_until
+    lock_until = datetime.now(timezone.utc) + timedelta(minutes=_CANDLE_MINUTES * 2)
+    existing = _symbol_lock_until.get(symbol)
+    if existing is None or lock_until > existing:
+        _symbol_lock_until[symbol] = lock_until
+        logger.info("RiskManager: CooldownPeriod engaged for {} until {}", symbol, lock_until.strftime("%H:%M UTC"))
 
 
 @dataclass
@@ -83,7 +103,35 @@ class RiskManager:
                 for c in candidates
             ]
 
-        # 3. Concurrent signal check
+        # 3. StoplossGuard: halt after 4 SL hits in 24h → lock 4h
+        sl_blocked, sl_reason = await self._check_stoploss_guard(session)
+        if sl_blocked:
+            return [
+                (c, RiskCheckResult(
+                    approved=False,
+                    rejection_reason=sl_reason,
+                    position_size=Decimal("0"),
+                    risk_amount=0.0,
+                    daily_pnl=daily_pnl,
+                ))
+                for c in candidates
+            ]
+
+        # 4. MaxDrawdown: halt if equity drops 20% in 48h → lock 12h
+        dd_blocked, dd_reason = await self._check_max_drawdown_guard(session)
+        if dd_blocked:
+            return [
+                (c, RiskCheckResult(
+                    approved=False,
+                    rejection_reason=dd_reason,
+                    position_size=Decimal("0"),
+                    risk_amount=0.0,
+                    daily_pnl=daily_pnl,
+                ))
+                for c in candidates
+            ]
+
+        # 5. Concurrent signal check
         concurrent_count = await self._check_concurrent_limit(session)
         if concurrent_count >= MAX_CONCURRENT_SIGNALS:
             return [
@@ -97,13 +145,38 @@ class RiskManager:
                 for c in candidates
             ]
 
-        # 4. Position sizing and individual approval
+        # 6. Per-candidate: CooldownPeriod + LowProfitPairs + position sizing
         results = []
         for candidate in candidates:
+            symbol = getattr(candidate, "symbol", "")
+
+            # CooldownPeriod: in-memory, 2h after any exit
+            cooldown_blocked, cooldown_reason = self._check_cooldown(symbol)
+            if cooldown_blocked:
+                results.append((candidate, RiskCheckResult(
+                    approved=False,
+                    rejection_reason=cooldown_reason,
+                    position_size=Decimal("0"),
+                    risk_amount=0.0,
+                    daily_pnl=daily_pnl,
+                )))
+                continue
+
+            # LowProfitPairs: lock symbol 60 min if <2% profit in last 6h (min 2 trades)
+            lp_blocked, lp_reason = await self._check_low_profit_pair(session, symbol)
+            if lp_blocked:
+                results.append((candidate, RiskCheckResult(
+                    approved=False,
+                    rejection_reason=lp_reason,
+                    position_size=Decimal("0"),
+                    risk_amount=0.0,
+                    daily_pnl=daily_pnl,
+                )))
+                continue
+
             position_size, risk_amount = self.calculate_position_size(
                 candidate, account_balance, current_atr, baseline_atr
             )
-
             results.append((
                 candidate,
                 RiskCheckResult(
@@ -148,6 +221,98 @@ class RiskManager:
             return result.scalar_one()
         except Exception:
             return 0
+
+    async def _check_stoploss_guard(self, session: AsyncSession) -> tuple[bool, str]:
+        """Halt if 4+ SL hits in last 24 candles (24h). Lock 4 candles (4h)."""
+        global _global_lock_until
+        now = datetime.now(timezone.utc)
+        if _global_lock_until and now < _global_lock_until:
+            return True, f"StoplossGuard: locked until {_global_lock_until.strftime('%H:%M UTC')}"
+        try:
+            cutoff = now - timedelta(hours=24)
+            stmt = select(func.count()).select_from(Outcome).where(
+                and_(Outcome.created_at >= cutoff, Outcome.result == "sl_hit")
+            )
+            result = await session.execute(stmt)
+            sl_count = int(result.scalar_one() or 0)
+        except Exception:
+            return False, ""
+        if sl_count >= 4:
+            _global_lock_until = now + timedelta(hours=4)
+            logger.warning(
+                "RiskManager: StoplossGuard — {} SL hits in 24h, locked 4h until {}",
+                sl_count, _global_lock_until.strftime("%H:%M UTC"),
+            )
+            return True, f"StoplossGuard: {sl_count} SL hits in 24h — locked 4h"
+        return False, ""
+
+    async def _check_max_drawdown_guard(self, session: AsyncSession) -> tuple[bool, str]:
+        """Halt if equity drops 20% in last 48 candles (48h). Lock 12 candles (12h)."""
+        global _global_lock_until
+        now = datetime.now(timezone.utc)
+        if _global_lock_until and now < _global_lock_until:
+            return True, f"MaxDrawdown: locked until {_global_lock_until.strftime('%H:%M UTC')}"
+        try:
+            settings = get_settings()
+            cutoff = now - timedelta(hours=48)
+            stmt = select(func.coalesce(func.sum(Outcome.pnl_usdt), 0)).where(
+                Outcome.created_at >= cutoff
+            )
+            result = await session.execute(stmt)
+            period_pnl = float(result.scalar_one())
+        except Exception:
+            return False, ""
+        drawdown_pct = abs(period_pnl) / settings.account_balance if period_pnl < 0 else 0.0
+        if drawdown_pct >= 0.20:
+            _global_lock_until = now + timedelta(hours=12)
+            logger.warning(
+                "RiskManager: MaxDrawdown — {:.1%} equity drop in 48h, locked 12h until {}",
+                drawdown_pct, _global_lock_until.strftime("%H:%M UTC"),
+            )
+            return True, f"MaxDrawdown: {drawdown_pct:.1%} in 48h — locked 12h"
+        return False, ""
+
+    def _check_cooldown(self, symbol: str) -> tuple[bool, str]:
+        """CooldownPeriod: block symbol for 2h after any exit (in-memory)."""
+        if not symbol:
+            return False, ""
+        now = datetime.now(timezone.utc)
+        lock_until = _symbol_lock_until.get(symbol)
+        if lock_until and now < lock_until:
+            return True, f"CooldownPeriod: {symbol} locked until {lock_until.strftime('%H:%M UTC')}"
+        return False, ""
+
+    async def _check_low_profit_pair(self, session: AsyncSession, symbol: str) -> tuple[bool, str]:
+        """LowProfitPairs: lock symbol 60 min if net loss in last 6h with ≥2 trades."""
+        if not symbol:
+            return False, ""
+        now = datetime.now(timezone.utc)
+        lock_until = _symbol_lock_until.get(symbol)
+        if lock_until and now < lock_until:
+            return True, f"LowProfitPairs: {symbol} locked until {lock_until.strftime('%H:%M UTC')}"
+        try:
+            cutoff = now - timedelta(hours=6)
+            stmt = (
+                select(Outcome.pnl_usdt)
+                .join(Signal, Outcome.signal_id == Signal.id)
+                .where(and_(Signal.symbol == symbol, Outcome.created_at >= cutoff))
+            )
+            result = await session.execute(stmt)
+            pnl_values = [float(r) for r in result.scalars().all()]
+        except Exception:
+            return False, ""
+        if len(pnl_values) < 2:
+            return False, ""
+        total_pnl = sum(pnl_values)
+        if total_pnl < 0:
+            new_lock = now + timedelta(minutes=60)
+            _symbol_lock_until[symbol] = new_lock
+            logger.warning(
+                "RiskManager: LowProfitPairs — {} net ${:.2f} in 6h ({} trades), locked 60m",
+                symbol, total_pnl, len(pnl_values),
+            )
+            return True, f"LowProfitPairs: {symbol} net ${total_pnl:.2f} in 6h — locked 60m"
+        return False, ""
 
     def calculate_position_size(
         self,

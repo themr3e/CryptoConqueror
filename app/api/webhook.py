@@ -35,9 +35,11 @@ from pydantic import BaseModel, field_validator
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.config import get_settings
 from app.database import async_session_factory as async_sessionmaker
 from app.models.signal import Signal
 from app.models.strategy import Strategy
+from app.services.binance_executor import BinanceExecutor
 
 router = APIRouter(prefix="/webhook", tags=["webhook"])
 
@@ -140,11 +142,36 @@ async def tradingview_webhook(alert: TVAlert) -> dict[str, Any]:
 
         logger.info("Webhook: signal #{} stored for {} {}", signal.id, alert.symbol, alert.direction)
 
+    # ── Execute on Binance immediately ───────────────────────────────────────
+    settings = get_settings()
+    execution_result = None
+    if settings.binance_order_execution_enabled:
+        executor = BinanceExecutor()
+        async with async_sessionmaker() as exec_session:
+            execution_result = await executor.execute_signal(exec_session, signal)
+            if execution_result.success:
+                logger.info(
+                    "Webhook: Binance order placed for signal #{} {} {}",
+                    signal.id, alert.symbol, alert.direction,
+                )
+            else:
+                logger.warning(
+                    "Webhook: Binance execution failed for signal #{} — {}",
+                    signal.id, execution_result.error_message,
+                )
+    else:
+        logger.info(
+            "Webhook: signal #{} stored — Binance execution disabled (BINANCE_ORDER_EXECUTION_ENABLED=false)",
+            signal.id,
+        )
+
     return {
-        "ok":          True,
-        "signal_id":   signal.id,
-        "symbol":      alert.symbol,
-        "direction":   alert.direction,
-        "strategy":    strategy_name,
-        "entry":       alert.entry,
+        "ok":              True,
+        "signal_id":       signal.id,
+        "symbol":          alert.symbol,
+        "direction":       alert.direction,
+        "strategy":        strategy_name,
+        "entry":           alert.entry,
+        "binance_executed": execution_result.success if execution_result else False,
+        "binance_error":   execution_result.error_message if execution_result and not execution_result.success else None,
     }

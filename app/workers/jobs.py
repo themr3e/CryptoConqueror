@@ -575,6 +575,77 @@ async def job_detect_crypto_outcomes() -> None:
             logger.opt(exception=True).error("[Job] detect_crypto_outcomes failed")
 
 
+async def job_reconcile_unexecuted_signals() -> None:
+    """Every 15 min: find active signals with no TradeOrder and execute them on Binance.
+
+    Safety net for signals that arrived via the TradingView webhook before the
+    webhook was updated to call execute_signal() directly, or in case the
+    executor crashed mid-flight and left the signal orphaned.
+    """
+    settings = get_settings()
+    if not settings.crypto_enabled or not settings.binance_order_execution_enabled:
+        return
+
+    from sqlalchemy import select, not_, exists
+    from app.models.signal import Signal
+    from app.models.trade_order import TradeOrder
+    from datetime import timedelta
+
+    async with async_sessionmaker() as session:
+        try:
+            # Active signals that have zero TradeOrder records
+            orphaned_stmt = (
+                select(Signal)
+                .where(
+                    Signal.status == "active",
+                    not_(
+                        exists(
+                            select(TradeOrder.id).where(TradeOrder.signal_id == Signal.id)
+                        )
+                    ),
+                    # Only retry if signal was created within last 2 hours (not ancient)
+                    Signal.created_at >= datetime.now(timezone.utc) - timedelta(hours=2),
+                )
+            )
+            result = await session.execute(orphaned_stmt)
+            orphaned = result.scalars().all()
+
+            if not orphaned:
+                return
+
+            logger.warning(
+                "[Reconcile] Found {} active signal(s) with no Binance order — executing now",
+                len(orphaned),
+            )
+            executor = _get_binance_executor()
+            _s = get_settings()
+            notifier = TelegramNotifier(bot_token=_s.telegram_bot_token or "", chat_id=_s.telegram_chat_id or "")
+
+            for signal in orphaned:
+                exec_result = await executor.execute_signal(session, signal)
+                if exec_result.success:
+                    logger.info(
+                        "[Reconcile] Executed orphaned signal #{} {} {}",
+                        signal.id, signal.direction, signal.symbol,
+                    )
+                    await notifier._send_message(
+                        f"⚠️ <b>Reconcile:</b> Late Binance order placed\n"
+                        f"Signal #{signal.id} {signal.symbol} {signal.direction} — was unexecuted"
+                    )
+                else:
+                    logger.error(
+                        "[Reconcile] Failed to execute orphaned signal #{} — {}",
+                        signal.id, exec_result.error_message,
+                    )
+                    await notifier._send_message(
+                        f"🚨 <b>Reconcile FAILED:</b> Signal #{signal.id} {signal.symbol} "
+                        f"{signal.direction} has no Binance order and execution failed: "
+                        f"{exec_result.error_message}"
+                    )
+        except Exception:
+            logger.opt(exception=True).error("[Job] reconcile_unexecuted_signals failed")
+
+
 async def job_iceberg_watchdog() -> None:
     """Restart any iceberg scanner threads that crashed."""
     from app.services.iceberg_monitor import iceberg_monitor
@@ -720,6 +791,15 @@ def register_jobs(scheduler: AsyncIOScheduler) -> None:
         minutes=2,
         id="self_improve",
         name="Self-improvement analysis",
+    )
+
+    # Signal reconciliation — catch signals with no Binance order (every 15 min)
+    scheduler.add_job(
+        job_reconcile_unexecuted_signals,
+        trigger="interval",
+        minutes=15,
+        id="reconcile_unexecuted_signals",
+        name="Reconcile active signals missing Binance orders",
     )
 
     # Iceberg monitor watchdog — restarts crashed scanner threads (every 5 min)
